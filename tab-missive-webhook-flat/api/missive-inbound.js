@@ -3,7 +3,7 @@
 // This version uses OpenAI Assistants (file_search) to draft HTML replies using the FULL Missive thread.
 
 const OPENAI_API = "https://api.openai.com/v1";
-const MISSIVE_API = "https://api.missiveapp.com/v1";
+const MISSIVE_API = "https://public.missiveapp.com/v1";
 
 // Helper: wait
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -137,26 +137,23 @@ module.exports = async (req, res) => {
     const bodyHtml = /<\/?[a-z][\s\S]*>/i.test(out) ? out : `<p>${out.replace(/\n/g, "<br/>")}</p>`;
 
     // 7) Create a draft reply in the same Missive conversation
-    const draftResp = await fetch(`${MISSIVE_API}/drafts`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.MISSIVE_API_TOKEN}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        drafts: {
-          conversation: convoId,
-          subject: subject ? `Re: ${subject}` : "Re:",
-          body: bodyHtml,
-          quote_previous_message: false
-        }
-      })
-    });
-    if (!draftResp.ok) {
-      const t = await draftResp.text();
-      throw new Error(`Missive draft create error: ${t}`);
-    }
-
+    const draftRes = await fetch(`${MISSIVE_API}/messages`, {
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${process.env.MISSIVE_API_TOKEN}`,
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    draft: true,                 // <-- tells Missive this is a draft
+    conversation: convoId,       // <-- the conversation id from the webhook
+    subject: subject ? `Re: ${subject}` : "Re:",
+    content: bodyHtml,           // <-- your HTML from the Assistant
+    quote: false                 // don't auto-quote previous message
+  })
+});
+if (!draftRes.ok) {
+  throw new Error(`Missive draft create error: ${await draftRes.text()}`);
+}
     return res.status(200).json({ ok: true });
   } catch (err) {
     console.error(err);
