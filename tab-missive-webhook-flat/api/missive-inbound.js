@@ -152,24 +152,29 @@ module.exports = async (req, res) => {
       ? out
       : `<p>${out.replace(/\n/g, "<br/>")}</p>`;
 
-    // 7) Create a draft reply in the same Missive conversation
-    const draftRes = await fetch(`${MISSIVE_API}/messages`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.MISSIVE_API_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        draft: true, // mark as draft
-        conversation: convoId,
-        subject: subject ? `Re: ${subject}` : "Re:",
-        content: bodyHtml, // HTML
-        quote: false,
-      }),
-    });
-    if (!draftRes.ok) {
-      throw new Error(`Missive draft create error: ${await draftRes.text()}`);
-    }
+    // 7) Create a draft reply in the same Missive conversation (via /messages)
+  const draftRes = await fetch(`${MISSIVE_API}/messages`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.MISSIVE_API_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      messages: [
+        {
+          draft: true,                 // mark as draft
+          conversation: convoId,       // conversation id from webhook
+          subject: subject ? `Re: ${subject}` : "Re:",
+          content: bodyHtml,           // HTML
+          quote: false,                // don't auto-quote
+        },
+      ],
+    }),
+  });
+
+  if (!draftRes.ok) {
+    throw new Error(`Missive draft create error: ${await draftRes.text()}`);
+  }
 
     return res.status(200).json({ ok: true });
   } catch (err) {
