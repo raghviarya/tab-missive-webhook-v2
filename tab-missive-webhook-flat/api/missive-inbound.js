@@ -69,24 +69,60 @@ module.exports = async (req, res) => {
     const threadText = clamp(msgs, 32000);
     const subject = (convo.conversation?.subject || "").trim();
 
-    // 3) Create an OpenAI Thread with your prompt + full thread
-    const systemHint =
-      process.env.SYSTEM_HINT ||
-      "Reply in concise, professional HTML (<p>, <ul>, <li>). No signature.";
-    const userMessage = [
-      `Context:\n${systemHint}`,
-      "",
-      "Task: Draft an HTML reply to the customer using our knowledge files if relevant.",
-      "Guidelines:",
-      "- Be brief but complete; add bullet points for steps or missing info.",
-      "- If policy/FAQ applies, incorporate it (no explicit citations).",
-      "- Do NOT repeat the whole thread.",
-      "",
-      `Subject: ${subject || "(no subject)"}`,
-      "",
-      "=== FULL THREAD (oldest → newest) ===",
-      threadText,
-    ].join("\n");
+    // 3) Create an OpenAI Thread with your prompt + full thread (Playground rules baked in)
+const PAYMENTS_URL = "https://business.tab.travel/payments?show=true&referrer_code=PaymentsR17&utm_source=Missive&utm_medium=email&utm_campaign=PaymentsR17";
+const CHECKOUT_URL = "https://business.tab.travel/checkout-flow?show=true&referrer_code=CheckoutR3&utm_source=Missive&utm_medium=email&utm_campaign=CheckoutR3";
+
+// Simple heuristic: suggest Checkout CTA if subject or thread mentions "checkout"
+const suggestCheckout = /checkout/i.test(subject) || /checkout/i.test(threadText);
+const SUGGESTED_CTA_URL = suggestCheckout ? CHECKOUT_URL : PAYMENTS_URL;
+const SUGGESTED_CTA_LABEL = "Apply now";
+
+const systemHint =
+  process.env.SYSTEM_HINT ||
+  [
+    // Core style & scope
+    "You are Tab’s email drafting assistant for both customer service and outbound cold emails.",
+    "Always output clean HTML only: <p>, <ul>, <ol>, <li>, <strong>, <em>, <a>. No signatures.",
+    "Tone: professional, empathetic, concise, solution-oriented. Prefer 2–4 short paragraphs; use lists for steps.",
+    "Do not overpromise. Do not set up accounts or complete tasks for the user; provide guidance and next steps.",
+    "Adapt formality to the sender’s tone. For complaints: acknowledge, take responsibility where appropriate, give a clear plan to resolve.",
+
+    // Knowledge use (file_search)
+    'When answering, FIRST check the **"Canned responses"** PDF for a relevant response and use it as-is.',
+    'Only if there is no matching canned response, or parts must be adapted, may you consult the **"Fin context"** file via file_search.',
+    "Use file_search to ground facts, but do not show citations, doc names, or file IDs to the customer.",
+
+    // Hard classification rules (single-token outputs)
+    'If the incoming message is clearly an automated response or irrelevant bulk marketing (e.g., newsletter, OOO, generic acknowledgment, template blast), reply **exactly**: "Automated response".',
+    'If the message appears to be spam or phishing (fake invoices, payment scams, suspicious requests/attachments), reply **exactly**: "spam".',
+    'If someone complains, asks to unsubscribe, or expresses anger, reply **exactly**: "Unsubscribe".',
+    'If the message asks to be contacted on WhatsApp or another messenger and includes a phone number, reply **exactly**: "Whatsapp".',
+    'If you cannot find the information or do not explicitly know the answer, reply **exactly**: "I don\'t know". Do not guess.',
+
+    // CTA logic
+    `When appropriate, include a clear call-to-action hyperlink labeled "${SUGGESTED_CTA_LABEL}".`,
+    `If the previous email explicitly mentions the checkout flow, use: ${CHECKOUT_URL}`,
+    `Otherwise use: ${PAYMENTS_URL}`,
+
+  ].join(" ");
+
+const userMessage = [
+  `SUBJECT: ${subject || "(no subject)"}`,
+
+  "",
+  "TASK: Draft a concise, helpful HTML reply that addresses the most recent customer message. Use 'Canned responses' first; otherwise adapt from 'Fin context' if needed. Apply the strict classification rules when they match (respond with the exact single word/phrase). Do not include signatures.",
+
+  "",
+  "CTA POLICY:",
+  `- Default CTA: <a href="${PAYMENTS_URL}">Apply now</a>`,
+  `- If thread/subject mentions checkout: <a href="${CHECKOUT_URL}">Apply now</a>`,
+  `- Suggested CTA for this thread: <a href="${SUGGESTED_CTA_URL}">Apply now</a>`,
+
+  "",
+  "CONTEXT (FULL THREAD, oldest → newest):",
+  threadText,
+].join("\n");
 
     // Create Thread (Assistants v2 header required)
     const threadCreate = await fetch(`${OPENAI_API}/threads`, {
