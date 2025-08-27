@@ -2,8 +2,6 @@
 // Framework: Vercel "Other" (Node 18+)
 // This version uses OpenAI Assistants (file_search) to draft HTML replies using the FULL Missive thread.
 
-const fetch = require("node-fetch");
-
 const OPENAI_API = "https://api.openai.com/v1";
 const MISSIVE_API = "https://api.missiveapp.com/v1";
 
