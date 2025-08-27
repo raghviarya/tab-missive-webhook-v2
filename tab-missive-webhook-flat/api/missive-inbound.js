@@ -69,56 +69,72 @@ module.exports = async (req, res) => {
     const threadText = clamp(msgs, 32000);
     const subject = (convo.conversation?.subject || "").trim();
 
-    // 3) Create an OpenAI Thread with your prompt + full thread (Playground rules baked in)
+    // 3) Create an OpenAI Thread with your prompt + full thread (refined rules)
 const PAYMENTS_URL = "https://business.tab.travel/payments?show=true&referrer_code=PaymentsR17&utm_source=Missive&utm_medium=email&utm_campaign=PaymentsR17";
 const CHECKOUT_URL = "https://business.tab.travel/checkout-flow?show=true&referrer_code=CheckoutR3&utm_source=Missive&utm_medium=email&utm_campaign=CheckoutR3";
 
-// Simple heuristic: suggest Checkout CTA if subject or thread mentions "checkout"
+// Heuristic: prefer Checkout CTA if subject/thread mention "checkout"
 const suggestCheckout = /checkout/i.test(subject) || /checkout/i.test(threadText);
 const SUGGESTED_CTA_URL = suggestCheckout ? CHECKOUT_URL : PAYMENTS_URL;
 const SUGGESTED_CTA_LABEL = "Apply now";
 
+// Helper note that the model can follow for fallback overviews
+const FALLBACK_OVERVIEW = `
+If the user asks for "more information" or a general overview (e.g., "send more info", "tell me more"):
+- Provide a concise overview in HTML:
+  <p>1–2 sentence intro</p>
+  <ul>
+    <li>What it is (plain language)</li>
+    <li>Core benefits (2–4 bullets)</li>
+    <li>What the user can do next (1–2 bullets)</li>
+  </ul>
+- End with a CTA hyperlink: <a href="${SUGGESTED_CTA_URL}">${SUGGESTED_CTA_LABEL}</a>.
+- Do NOT say "I don't know" in these generic cases; use available high-level info from files and prior messages.
+`.trim();
+
 const systemHint =
   process.env.SYSTEM_HINT ||
   [
-    // Core style & scope
+    // Scope & tone
     "You are Tab’s email drafting assistant for both customer service and outbound cold emails.",
     "Always output clean HTML only: <p>, <ul>, <ol>, <li>, <strong>, <em>, <a>. No signatures.",
     "Tone: professional, empathetic, concise, solution-oriented. Prefer 2–4 short paragraphs; use lists for steps.",
     "Do not overpromise. Do not set up accounts or complete tasks for the user; provide guidance and next steps.",
     "Adapt formality to the sender’s tone. For complaints: acknowledge, take responsibility where appropriate, give a clear plan to resolve.",
 
-    // Knowledge use (file_search)
-    'When answering, FIRST check the **"Canned responses"** PDF for a relevant response and use it as-is.',
-    'Only if there is no matching canned response, or parts must be adapted, may you consult the **"Fin context"** file via file_search.',
-    "Use file_search to ground facts, but do not show citations, doc names, or file IDs to the customer.",
+    // Knowledge policy
+    'FIRST, check the "Canned responses" PDF for a relevant response and use it as-is (lightly adapt details only as needed).',
+    'IF no suitable canned response exists, consult "Fin context" via file_search and synthesize an answer.',
+    "Use file_search to ground facts; do not show citations, filenames, or IDs to the customer.",
 
-    // Hard classification rules (single-token outputs)
-    'If the incoming message is clearly an automated response or irrelevant bulk marketing (e.g., newsletter, OOO, generic acknowledgment, template blast), reply **exactly**: "Automated response".',
-    'If the message appears to be spam or phishing (fake invoices, payment scams, suspicious requests/attachments), reply **exactly**: "spam".',
-    'If someone complains, asks to unsubscribe, or expresses anger, reply **exactly**: "Unsubscribe".',
-    'If the message asks to be contacted on WhatsApp or another messenger and includes a phone number, reply **exactly**: "Whatsapp".',
-    'If you cannot find the information or do not explicitly know the answer, reply **exactly**: "I don\'t know". Do not guess.',
+    // Strict classifications — ONLY with high confidence
+    'Only if you are HIGHLY CONFIDENT the message matches, reply with the exact single token:',
+    '- Automated/irrelevant bulk (OOO/newsletter/template marketing): output exactly "Automated response".',
+    '- Spam/phishing (fake invoices, payment scams, suspicious attachments/requests): output exactly "spam".',
+    '- Unsubscribe/angry/complaint requesting removal: output exactly "Unsubscribe".',
+    '- Explicit WhatsApp handoff with phone number: output exactly "Whatsapp".',
+    // Guardrail for "I don't know"
+    'Only output "I don\'t know" if the user asks for a specific fact/policy that is NOT in files or prior messages and cannot be answered with a truthful, high-level explanation. Do NOT use "I don\'t know" for generic requests like "send more information".',
 
     // CTA logic
-    `When appropriate, include a clear call-to-action hyperlink labeled "${SUGGESTED_CTA_LABEL}".`,
-    `If the previous email explicitly mentions the checkout flow, use: ${CHECKOUT_URL}`,
+    `When appropriate, include a clear CTA hyperlink labeled "${SUGGESTED_CTA_LABEL}".`,
+    `If thread/subject explicitly mentions checkout flow, use: ${CHECKOUT_URL}`,
     `Otherwise use: ${PAYMENTS_URL}`,
 
+    // Fallback pattern for generic info requests
+    FALLBACK_OVERVIEW,
   ].join(" ");
 
 const userMessage = [
   `SUBJECT: ${subject || "(no subject)"}`,
-
   "",
-  "TASK: Draft a concise, helpful HTML reply that addresses the most recent customer message. Use 'Canned responses' first; otherwise adapt from 'Fin context' if needed. Apply the strict classification rules when they match (respond with the exact single word/phrase). Do not include signatures.",
-
+  "TASK: Draft a concise, helpful HTML reply that addresses the most recent customer message. Apply the classification rules ONLY if the match is obvious; otherwise give a normal reply.",
+  "Follow the knowledge policy (Canned responses → Fin context). For general 'more info' asks, use the fallback overview pattern.",
   "",
   "CTA POLICY:",
   `- Default CTA: <a href="${PAYMENTS_URL}">Apply now</a>`,
   `- If thread/subject mentions checkout: <a href="${CHECKOUT_URL}">Apply now</a>`,
   `- Suggested CTA for this thread: <a href="${SUGGESTED_CTA_URL}">Apply now</a>`,
-
   "",
   "CONTEXT (FULL THREAD, oldest → newest):",
   threadText,
