@@ -38,18 +38,21 @@ function senderLabel(m) {
   return email ? `${name} <${email}>` : name;
 }
 
-/** List message stubs in a conversation (newest→oldest), then fetch each full message.
- * Pagination: use ?limit & ?until (until = delivered_at of oldest in the last page).
+/** Fetch ALL messages in a conversation (newest→oldest from API; we'll re-sort oldest→newest).
+ * Uses /v1/conversations/:id/messages (limit max 10) + ?until pagination,
+ * then hydrates each message via /v1/messages/:id to get full bodies.
  */
 async function fetchConversationMessages(conversationId) {
-  const limit = 200;
-  let until = undefined;
+  const limit = 10;            // Missive max for this endpoint
+  let until = undefined;       // pagination cursor (oldest delivered_at from previous page)
   let collected = [];
 
   while (true) {
     const url = new URL(`${MISSIVE_API}/conversations/${encodeURIComponent(conversationId)}/messages`);
     url.searchParams.set("limit", String(limit));
-    if (until) url.searchParams.set("until", String(until));
+    if (until !== undefined && until !== null) {
+      url.searchParams.set("until", String(until));
+    }
 
     const listResp = await fetch(url.toString(), {
       headers: { Authorization: `Bearer ${process.env.MISSIVE_API_TOKEN}` },
@@ -62,7 +65,7 @@ async function fetchConversationMessages(conversationId) {
     const page = Array.isArray(listJson?.messages) ? listJson.messages : [];
     if (page.length === 0) break;
 
-    // Fetch each message's full body
+    // Hydrate each message to get the full body/html/attachments
     const full = await Promise.all(
       page.map(async (stub) => {
         const id = stub.id;
@@ -74,28 +77,30 @@ async function fetchConversationMessages(conversationId) {
           throw new Error(`Missive get message ${id} failed: ${t}`);
         }
         const j = await msgResp.json();
-        // Per docs, single object is under "message"
-        return j?.message || j?.messages || j; // be defensive across org versions
+        // Single message object may be returned as { message: {...} } (most orgs) or { messages: {...} }
+        return j?.message || j?.messages || j;
       })
     );
 
     collected = collected.concat(full);
 
-    // Determine next cursor (API returns newest→oldest)
-    const deliveredAts = page.map(p => p.delivered_at).filter(Boolean);
+    // API returns newest→oldest. Move cursor to the OLDEST delivered_at we just saw.
+    const deliveredAts = page.map(p => p.delivered_at).filter(v => v !== undefined && v !== null);
     const oldestInPage = deliveredAts.length ? Math.min(...deliveredAts) : undefined;
 
+    // Stop if we got fewer than limit OR can't advance the cursor
     if (page.length < limit || !oldestInPage || oldestInPage === until) break;
     until = oldestInPage;
 
-    // polite pause
+    // small pause to be polite
     await sleep(120);
   }
 
-  // Sort oldest → newest for natural reading
+  // Present oldest→newest for the model
   collected.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
   return collected;
 }
+
 
 module.exports = async (req, res) => {
   try {
