@@ -1,7 +1,7 @@
 // api/missive-inbound.js
 // Framework: Vercel "Other" (Node 18+)
-// Builds FULL thread by fetching each Missive message via /v1/messages/:id,
-// then drafts a reply using OpenAI Assistants (file_search).
+// Builds FULL thread by listing /v1/conversations/:id/messages, then fetching each /v1/messages/:id,
+// strips HTML, includes sender name+email+time, and drafts a reply via OpenAI Assistants (file_search).
 
 const OPENAI_API = "https://api.openai.com/v1";
 const MISSIVE_API = "https://public.missiveapp.com/v1";
@@ -13,59 +13,59 @@ const OPENAI_HEADERS = {
   "OpenAI-Beta": "assistants=v2",
 };
 
-// Basic wait helper
+// Wait helper
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** User-requested HTML stripper (simple tag remover). */
+/** Simple HTML stripper (your requested regex). */
 function stripHtml(html = "") {
   return String(html || "").replace(/<[^>]*>/g, "");
 }
 
-/** Clamp big strings so we stay under model limits. Use a large cap for gpt-4.1. */
-function clamp(text, max = 100000) {
+/** Clamp big strings to avoid blowing context limits (very generous). */
+function clamp(text, max = 120000) {
   if (!text) return "";
   return text.length <= max ? text : text.slice(0, max) + "\n[...truncated for length...]";
 }
 
-/** Safe getter for the best display name + email for a message. */
+/** Build "Name <email>" best-effort label for a message. */
 function senderLabel(m) {
   const name =
     m.from_field?.name ||
     m.creator?.name ||
-    m.creator?.email?.split("@")[0] ||
+    (m.creator?.email ? m.creator.email.split("@")[0] : "") ||
     "Unknown";
   const email = m.from_field?.address || m.creator?.email || "";
   return email ? `${name} <${email}>` : name;
 }
 
-/** Fetch ALL messages in a conversation, oldest → newest. */
+/** List message stubs in a conversation (newest→oldest), then fetch each full message.
+ * Pagination: use ?limit & ?until (until = delivered_at of oldest in the last page).
+ */
 async function fetchConversationMessages(conversationId) {
-  // Try to pull up to 200 in one go; paginate if needed.
-  // Missive uses standard pagination; if your threads are longer, you can extend this.
-  const perPage = 200;
-  let page = 1;
-  let all = [];
+  const limit = 200;
+  let until = undefined;
+  let collected = [];
 
-  // First: list message IDs in the conversation
   while (true) {
-    const listUrl =
-      `${MISSIVE_API}/messages?search[conversation]=${encodeURIComponent(conversationId)}` +
-      `&per_page=${perPage}&page=${page}`;
+    const url = new URL(`${MISSIVE_API}/conversations/${encodeURIComponent(conversationId)}/messages`);
+    url.searchParams.set("limit", String(limit));
+    if (until) url.searchParams.set("until", String(until));
 
-    const listResp = await fetch(listUrl, {
+    const listResp = await fetch(url.toString(), {
       headers: { Authorization: `Bearer ${process.env.MISSIVE_API_TOKEN}` },
     });
     if (!listResp.ok) {
       const t = await listResp.text();
-      throw new Error(`Missive list messages failed: ${t}`);
+      throw new Error(`Missive list conversation messages failed: ${t}`);
     }
     const listJson = await listResp.json();
-    const ids = (listJson?.messages || []).map((m) => m.id);
+    const page = Array.isArray(listJson?.messages) ? listJson.messages : [];
+    if (page.length === 0) break;
 
-    // For each id, fetch the full message
-    // (Parallelize but cap concurrency a bit if needed; here we go wide for simplicity.)
+    // Fetch each message's full body
     const full = await Promise.all(
-      ids.map(async (id) => {
+      page.map(async (stub) => {
+        const id = stub.id;
         const msgResp = await fetch(`${MISSIVE_API}/messages/${encodeURIComponent(id)}`, {
           headers: { Authorization: `Bearer ${process.env.MISSIVE_API_TOKEN}` },
         });
@@ -74,27 +74,32 @@ async function fetchConversationMessages(conversationId) {
           throw new Error(`Missive get message ${id} failed: ${t}`);
         }
         const j = await msgResp.json();
-        return j?.message;
+        // Per docs, single object is under "message"
+        return j?.message || j?.messages || j; // be defensive across org versions
       })
     );
 
-    all = all.concat(full);
+    collected = collected.concat(full);
 
-    // Stop if we got fewer than perPage (likely last page)
-    if (ids.length < perPage) break;
-    page += 1;
-    // Small pause to be polite
-    await sleep(150);
+    // Determine next cursor (API returns newest→oldest)
+    const deliveredAts = page.map(p => p.delivered_at).filter(Boolean);
+    const oldestInPage = deliveredAts.length ? Math.min(...deliveredAts) : undefined;
+
+    if (page.length < limit || !oldestInPage || oldestInPage === until) break;
+    until = oldestInPage;
+
+    // polite pause
+    await sleep(120);
   }
 
-  // Sort oldest → newest
-  all.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-  return all;
+  // Sort oldest → newest for natural reading
+  collected.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  return collected;
 }
 
 module.exports = async (req, res) => {
   try {
-    // Health check
+    // Health check / GET ping
     if (req.method !== "POST") return res.status(200).send("ok");
 
     // 1) Parse Missive webhook
@@ -104,7 +109,7 @@ module.exports = async (req, res) => {
       return res.status(400).json({ error: "Missing conversation.id in Missive payload" });
     }
 
-    // 2) Fetch conversation meta (for subject) — lightweight
+    // 2) Fetch conversation meta (subject)
     const convoResp = await fetch(`${MISSIVE_API}/conversations/${encodeURIComponent(convoId)}`, {
       headers: { Authorization: `Bearer ${process.env.MISSIVE_API_TOKEN}` },
     });
@@ -115,10 +120,9 @@ module.exports = async (req, res) => {
     const convo = await convoResp.json();
     const subject = (convo.conversation?.subject || "").trim();
 
-    // 3) Fetch FULL message objects via /v1/messages/:id (names + clean text)
+    // 3) Fetch full messages (names + bodies) and build the thread text
     const messages = await fetchConversationMessages(convoId);
 
-    // Build readable thread text with names, emails, times, and plain text
     const threadText = clamp(
       messages
         .map((m) => {
@@ -130,11 +134,10 @@ module.exports = async (req, res) => {
             "";
           return `From: ${who}\nDate: ${when}\n---\n${text.trim()}`;
         })
-        .join("\n\n------------------------\n\n"),
-      120000 // allow a LOT of context; model will handle up to ~128k tokens
+        .join("\n\n------------------------\n\n")
     );
 
-    // === Prompt building (your refined rules + CTA logic) ===
+    // === Prompt: your refined rules + CTA logic ===
     const PAYMENTS_URL =
       "https://business.tab.travel/payments?show=true&referrer_code=PaymentsR17&utm_source=Missive&utm_medium=email&utm_campaign=PaymentsR17";
     const CHECKOUT_URL =
@@ -256,7 +259,7 @@ If the user asks for "more information" or a general overview (e.g., "send more 
       ? out
       : `<p>${out.replace(/\n/g, "<br/>")}</p>`;
 
-    // === Create the draft in Missive (email draft endpoint) ===
+    // 7) Create the email draft in Missive
     const draftRes = await fetch(`${MISSIVE_API}/drafts`, {
       method: "POST",
       headers: {
