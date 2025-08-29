@@ -1,7 +1,8 @@
 // api/missive-inbound.js
 // Framework: Vercel "Other" (Node 18+)
-// Builds FULL thread by listing /v1/conversations/:id/messages, then fetching each /v1/messages/:id,
-// strips HTML, includes sender name+email+time, and drafts a reply via OpenAI Assistants (file_search).
+// Builds FULL thread by listing /v1/conversations/:id/messages (limit=10 with pagination),
+// then fetching each /v1/messages/:id. Strips HTML, includes sender name+email+time,
+// drafts a reply via OpenAI Assistants (file_search), forces From address, and appends signature.
 
 const OPENAI_API = "https://api.openai.com/v1";
 const MISSIVE_API = "https://public.missiveapp.com/v1";
@@ -16,7 +17,7 @@ const OPENAI_HEADERS = {
 // Wait helper
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** Simple HTML stripper (your requested regex). */
+/** Simple HTML stripper (requested regex). */
 function stripHtml(html = "") {
   return String(html || "").replace(/<[^>]*>/g, "");
 }
@@ -38,16 +39,31 @@ function senderLabel(m) {
   return email ? `${name} <${email}>` : name;
 }
 
+/** Ensure visible paragraph spacing in Missive: insert <p><br></p> between <p> blocks. */
+function addParagraphSpacing(html) {
+  return String(html || "").replace(/<\/p>\s*<p>/g, "</p><p><br></p><p>");
+}
+
+/** Append a fixed HTML signature if it's not already present. */
+function appendSignature(html) {
+  const sig = `<p><br></p><p>Best regards,</p><p>Raghvi</p>`;
+  if (html.includes("Best regards") && html.includes("Raghvi")) return html;
+  return html + sig;
+}
+
 /** Fetch ALL messages in a conversation (newest→oldest from API; we'll re-sort oldest→newest).
  * Uses /v1/conversations/:id/messages (limit max 10) + ?until pagination,
  * then hydrates each message via /v1/messages/:id to get full bodies.
+ * Includes a hard cap to avoid long runtimes.
  */
 async function fetchConversationMessages(conversationId) {
   const limit = 10;            // Missive max for this endpoint
+  const MAX_PAGES = 6;         // Cap total (6 * 10 = 60 messages) — adjust if you like
   let until = undefined;       // pagination cursor (oldest delivered_at from previous page)
   let collected = [];
+  let pages = 0;
 
-  while (true) {
+  while (pages < MAX_PAGES) {
     const url = new URL(`${MISSIVE_API}/conversations/${encodeURIComponent(conversationId)}/messages`);
     url.searchParams.set("limit", String(limit));
     if (until !== undefined && until !== null) {
@@ -85,22 +101,25 @@ async function fetchConversationMessages(conversationId) {
     collected = collected.concat(full);
 
     // API returns newest→oldest. Move cursor to the OLDEST delivered_at we just saw.
-    const deliveredAts = page.map(p => p.delivered_at).filter(v => v !== undefined && v !== null);
+    const deliveredAts = page.map((p) => p.delivered_at).filter((v) => v !== undefined && v !== null);
     const oldestInPage = deliveredAts.length ? Math.min(...deliveredAts) : undefined;
 
     // Stop if we got fewer than limit OR can't advance the cursor
     if (page.length < limit || !oldestInPage || oldestInPage === until) break;
     until = oldestInPage;
+    pages += 1;
 
     // small pause to be polite
     await sleep(120);
   }
 
+  // Log how many we actually pulled (shows in Vercel logs)
+  console.log(`Missive messages fetched: ${collected.length} (pages=${pages}, cap=${MAX_PAGES * limit})`);
+
   // Present oldest→newest for the model
   collected.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
   return collected;
 }
-
 
 module.exports = async (req, res) => {
   try {
@@ -142,7 +161,7 @@ module.exports = async (req, res) => {
         .join("\n\n------------------------\n\n")
     );
 
-    // === Prompt: your refined rules + CTA logic ===
+    // === Prompt: refined rules + CTA logic ===
     const PAYMENTS_URL =
       "https://business.tab.travel/payments?show=true&referrer_code=PaymentsR17&utm_source=Missive&utm_medium=email&utm_campaign=PaymentsR17";
     const CHECKOUT_URL =
@@ -170,7 +189,7 @@ If the user asks for "more information" or a general overview (e.g., "send more 
       process.env.SYSTEM_HINT ||
       [
         "You are Tab’s email drafting assistant for both customer service and outbound cold emails.",
-        "Always output clean HTML only: <p>, <ul>, <ol>, <li>, <strong>, <em>, <a>. No signatures.",
+        "Use <p> for every paragraph. Keep each paragraph to 2–4 sentences max. Insert blank spacer paragraphs (<p><br></p>) between paragraphs for readability.",
         "Tone: professional, empathetic, concise, solution-oriented. Prefer 2–4 short paragraphs; use lists for steps.",
         "Do not overpromise. Do not set up accounts or complete tasks for the user; provide guidance and next steps.",
         "Adapt formality to the sender’s tone. For complaints: acknowledge, take responsibility where appropriate, give a clear plan to resolve.",
@@ -260,11 +279,14 @@ If the user asks for "more information" or a general overview (e.g., "send more 
       assistantMsg?.content?.map((c) => c.text?.value || "").join("\n").trim() ||
       "<p>Thanks for reaching out.</p>";
 
-    const bodyHtml = /<\/?[a-z][\s\S]*>/i.test(out)
+    // Ensure HTML, then enforce spacing + signature
+    let finalHtml = /<\/?[a-z][\s\S]*>/i.test(out)
       ? out
       : `<p>${out.replace(/\n/g, "<br/>")}</p>`;
+    finalHtml = addParagraphSpacing(finalHtml);
+    finalHtml = appendSignature(finalHtml);
 
-    // 7) Create the email draft in Missive
+    // 7) Create the email draft in Missive (force From: hello@tab.travel)
     const draftRes = await fetch(`${MISSIVE_API}/drafts`, {
       method: "POST",
       headers: {
@@ -275,8 +297,12 @@ If the user asks for "more information" or a general overview (e.g., "send more 
         drafts: {
           conversation: convoId,
           subject: subject ? `Re: ${subject}` : "Re:",
-          body: bodyHtml,
+          body: finalHtml,
           quote_previous_message: false,
+          from_field: {
+            address: "hello@tab.travel",
+            name: "Raghvi",
+          },
         },
       }),
     });
@@ -291,4 +317,3 @@ If the user asks for "more information" or a general overview (e.g., "send more 
     return res.status(500).json({ error: String(err?.message || err) });
   }
 };
-
