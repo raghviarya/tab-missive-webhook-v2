@@ -142,11 +142,12 @@ module.exports = async (req, res) => {
       throw new Error(`Missive conversation fetch failed: ${t}`);
     }
     const convo = await convoResp.json();
-    // Use latest_message_subject if conversation subject is null
-    const subject = (convo.conversation?.subject || convo.conversation?.latest_message_subject || "").trim();
+    // The API returns conversations array, so we need to access the first conversation
+    const conversation = convo.conversations?.[0];
+    const subject = (conversation?.subject || conversation?.latest_message_subject || "").trim();
     console.log("Conversation details:", JSON.stringify(convo, null, 2));
-    console.log("Raw conversation subject:", convo.conversation?.subject);
-    console.log("Raw latest message subject:", convo.conversation?.latest_message_subject);
+    console.log("Raw conversation subject:", conversation?.subject);
+    console.log("Raw latest message subject:", conversation?.latest_message_subject);
     console.log("Processed subject:", subject);
     console.log("Subject length:", subject.length);
 
