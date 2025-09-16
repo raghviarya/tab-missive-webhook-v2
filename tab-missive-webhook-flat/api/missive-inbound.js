@@ -215,6 +215,8 @@ If the user asks for "more information" or a general overview (e.g., "send more 
       "TASK: Draft a concise, helpful HTML reply that addresses the most recent customer message. Apply the classification rules ONLY if the match is obvious; otherwise give a normal reply.",
       "Follow the knowledge policy (Canned responses → Fin context). For general 'more info' asks, use the fallback overview pattern.",
       "",
+      "IMPORTANT: You MUST use file_search to find relevant information in the knowledge base before responding. Always search for relevant canned responses or context first.",
+      "",
       "CTA POLICY:",
       `- Default CTA: <a href="${PAYMENTS_URL}">Apply now</a>`,
       `- If thread/subject mentions checkout: <a href="${CHECKOUT_URL}">Apply now</a>`,
@@ -225,18 +227,25 @@ If the user asks for "more information" or a general overview (e.g., "send more 
     ].join("\n");
 
     // === Responses API with file_search (correct approach) ===
+    const requestBody = {
+      model: process.env.OPENAI_MODEL || "gpt-5",
+      input: userMessage,
+      tools: [{
+        type: "file_search",
+        vector_store_ids: [String(process.env.VECTOR_STORE_ID)], // Required for file search
+        max_num_results: 10, // Limit results
+      }],
+      tool_choice: "auto", // Ensure tools are used automatically
+      // Note: temperature not supported with GPT-5 in Responses API
+    };
+    
+    console.log('Request body:', JSON.stringify(requestBody, null, 2));
+    console.log('Vector store ID being used:', String(process.env.VECTOR_STORE_ID));
+    
     const responseCreate = await fetch(`${OPENAI_API}/responses`, {
       method: "POST",
       headers: OPENAI_HEADERS,
-      body: JSON.stringify({
-        model: process.env.OPENAI_MODEL || "gpt-5",
-        input: userMessage,
-        tools: [{
-          type: "file_search",
-          vector_store_ids: [String(process.env.VECTOR_STORE_ID)], // Required for file search
-        }],
-        // Note: temperature not supported with GPT-5 in Responses API
-      }),
+      body: JSON.stringify(requestBody),
     });
     if (!responseCreate.ok) {
       const t = await responseCreate.text();

@@ -16,7 +16,7 @@ async function testFileSearch() {
     console.log('Vector Store ID:', process.env.VECTOR_STORE_ID);
     console.log('');
     
-    const testQuery = "What are the canned responses for customer complaints?";
+    const testQuery = "What are the canned responses about fees and pricing?";
     
     console.log('Test Query:', testQuery);
     console.log('');
