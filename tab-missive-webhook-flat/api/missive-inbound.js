@@ -46,8 +46,8 @@ function addParagraphSpacing(html) {
 
 /** Append the proper Tab signature if it's not already present. */
 function appendSignature(html) {
-  const sig = `<p><br></p><p>Kind regards,</p><p>Raghvi</p><p>—</p><p>Tab Support</p><p><br></p><p>Tab.</p><p><a href="https://business.tab.travel/payments">business.tab.travel/payments</a></p><p><br></p><p>Tab Labs Ltd is a company registered in England and Wales. Registered number: 09339113. Registered office: 6th Floor, 1 London Wall, London, EC2Y 5EB, UK.</p>`;
-  if (html.includes("Kind regards") && html.includes("Tab Support")) return html;
+  const sig = `<p><br></p><p>Raghvi</p><p>—</p><p>Tab Support</p><p><br></p><p>Tab.</p><p><a href="https://business.tab.travel/payments">business.tab.travel/payments</a></p><p><br></p><p>Tab Labs Ltd is a company registered in England and Wales. Registered number: 09339113. Registered office: 6th Floor, 1 London Wall, London, EC2Y 5EB, UK.</p>`;
+  if (html.includes("Raghvi") && html.includes("Tab Support")) return html;
   return html + sig;
 }
 
@@ -142,9 +142,11 @@ module.exports = async (req, res) => {
       throw new Error(`Missive conversation fetch failed: ${t}`);
     }
     const convo = await convoResp.json();
-    const subject = (convo.conversation?.subject || "").trim();
+    // Use latest_message_subject if conversation subject is null
+    const subject = (convo.conversation?.subject || convo.conversation?.latest_message_subject || "").trim();
     console.log("Conversation details:", JSON.stringify(convo, null, 2));
-    console.log("Raw subject from API:", convo.conversation?.subject);
+    console.log("Raw conversation subject:", convo.conversation?.subject);
+    console.log("Raw latest message subject:", convo.conversation?.latest_message_subject);
     console.log("Processed subject:", subject);
     console.log("Subject length:", subject.length);
 
