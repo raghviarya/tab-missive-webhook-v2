@@ -291,15 +291,8 @@ If the user asks for "more information" or a general overview (e.g., "send more 
       body: JSON.stringify({
         drafts: {
           conversation: convoId,
-          subject: subject ? `Re: ${subject}` : "Re:",
           body: finalHtml,
           quote_previous_message: false,
-          from_field: {
-            address: "hello@tab.travel",
-            name: "Raghvi",
-          },
-          // Missive should automatically handle to_fields, subject, and signature for replies
-          send: false, // Create as draft, don't send immediately
         },
       }),
     });
