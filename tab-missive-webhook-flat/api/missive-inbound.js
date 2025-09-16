@@ -41,11 +41,7 @@ function senderLabel(m) {
 
 /** Ensure proper paragraph spacing in Missive: single line between paragraphs. */
 function addParagraphSpacing(html) {
-  // Add spacing between paragraphs and after each paragraph
-  return String(html || "")
-    .replace(/<\/p>\s*<p>/g, "</p><br><br><p>")
-    .replace(/<\/p>/g, "</p><br>")
-    .replace(/<br><br><br>/g, "<br><br>"); // Clean up triple breaks
+  return String(html || "").replace(/<\/p>\s*<p>/g, "</p><p><br></p><p>");
 }
 
 /** Append the proper Tab signature if it's not already present. */
