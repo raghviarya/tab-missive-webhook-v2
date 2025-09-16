@@ -291,7 +291,10 @@ If the user asks for "more information" or a general overview (e.g., "send more 
     // Note: Signature is handled automatically by Missive for hello@tab.travel
 
     // 7) Create the email draft in Missive (force From: hello@tab.travel)
-    const draftSubject = subject ? `Re: ${subject}` : "Re:";
+    // Don't add "Re:" if the subject already starts with "Re:"
+    const draftSubject = subject 
+      ? (subject.toLowerCase().startsWith('re:') ? subject : `Re: ${subject}`)
+      : "Re:";
     console.log("Draft subject being sent:", draftSubject);
     const draftRes = await fetch(`${MISSIVE_API}/drafts`, {
       method: "POST",
