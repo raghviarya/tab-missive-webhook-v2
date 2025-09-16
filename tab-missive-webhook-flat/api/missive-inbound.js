@@ -39,15 +39,15 @@ function senderLabel(m) {
   return email ? `${name} <${email}>` : name;
 }
 
-/** Ensure visible paragraph spacing in Missive: insert <p><br></p> between <p> blocks. */
+/** Ensure proper paragraph spacing in Missive: single line between paragraphs. */
 function addParagraphSpacing(html) {
-  return String(html || "").replace(/<\/p>\s*<p>/g, "</p><p><br></p><p>");
+  return String(html || "").replace(/<\/p>\s*<p>/g, "</p>\n<p>");
 }
 
-/** Append a fixed HTML signature if it's not already present. */
+/** Append the proper Tab signature if it's not already present. */
 function appendSignature(html) {
-  const sig = `<p><br></p><p>Best regards,</p><p>Raghvi</p>`;
-  if (html.includes("Best regards") && html.includes("Raghvi")) return html;
+  const sig = `<p><br></p><p>Kind regards,</p><p>Raghvi</p><p>—</p><p>Tab Support</p><p><br></p><p>Tab.</p><p>business.tab.travel/payments</p><p><br></p><p>Tab Labs Ltd is a company registered in England and Wales. Registered number: 09339113. Registered office: 6th Floor, 1 London Wall, London, EC2Y 5EB, UK.</p>`;
+  if (html.includes("Kind regards") && html.includes("Tab Support")) return html;
   return html + sig;
 }
 
@@ -188,11 +188,12 @@ If the user asks for "more information" or a general overview (e.g., "send more 
     const systemHint =
       process.env.SYSTEM_HINT ||
       [
-        "You are Tab’s email drafting assistant for both customer service and outbound cold emails.",
-        "Use <p> for every paragraph. Keep each paragraph to 2–4 sentences max. Insert blank spacer paragraphs (<p><br></p>) between paragraphs for readability.",
+        "You are Tab's email drafting assistant for both customer service and outbound cold emails.",
+        "Use <p> for every paragraph. Keep each paragraph to 2–4 sentences max. Do NOT add extra spacing between paragraphs - just use single line breaks.",
         "Tone: professional, empathetic, concise, solution-oriented. Prefer 2–4 short paragraphs; use lists for steps.",
         "Do not overpromise. Do not set up accounts or complete tasks for the user; provide guidance and next steps.",
-        "Adapt formality to the sender’s tone. For complaints: acknowledge, take responsibility where appropriate, give a clear plan to resolve.",
+        "Adapt formality to the sender's tone. For complaints: acknowledge, take responsibility where appropriate, give a clear plan to resolve.",
+        'IMPORTANT: You have access to file_search which will automatically search your knowledge base files. Use this information to provide accurate responses.',
         'FIRST, check the "Canned responses" PDF for a relevant response and use it as-is.',
         'IF no suitable canned response exists, consult "Fin context" via file_search and synthesize an answer.',
         "Use file_search to ground facts; do not show citations, filenames, or IDs to the customer.",
@@ -207,6 +208,8 @@ If the user asks for "more information" or a general overview (e.g., "send more 
       ].join(" ");
 
     const userMessage = [
+      `SYSTEM INSTRUCTIONS: ${systemHint}`,
+      "",
       `SUBJECT: ${subject || "(no subject)"}`,
       "",
       "TASK: Draft a concise, helpful HTML reply that addresses the most recent customer message. Apply the classification rules ONLY if the match is obvious; otherwise give a normal reply.",
@@ -221,70 +224,36 @@ If the user asks for "more information" or a general overview (e.g., "send more 
       threadText,
     ].join("\n");
 
-    // === Assistants v2: create thread, run, poll, get message ===
-    const threadCreate = await fetch(`${OPENAI_API}/threads`, {
+    // === Responses API with file_search (correct approach) ===
+    const responseCreate = await fetch(`${OPENAI_API}/responses`, {
       method: "POST",
       headers: OPENAI_HEADERS,
       body: JSON.stringify({
-        messages: [{ role: "user", content: userMessage }],
-      }),
-    });
-    if (!threadCreate.ok) {
-      const t = await threadCreate.text();
-      throw new Error(`OpenAI thread create error: ${t}`);
-    }
-    const thread = await threadCreate.json();
-
-    const runCreate = await fetch(`${OPENAI_API}/threads/${thread.id}/runs`, {
-      method: "POST",
-      headers: OPENAI_HEADERS,
-      body: JSON.stringify({
-        assistant_id: process.env.ASSISTANT_ID,
-        model: process.env.OPENAI_MODEL || "gpt-4.1", // large-context default
+        model: process.env.OPENAI_MODEL || "gpt-5",
+        input: userMessage,
+        tools: [{
+          type: "file_search",
+          vector_store_ids: [process.env.VECTOR_STORE_ID], // Required for file search
+        }],
         temperature: 0.3,
       }),
     });
-    if (!runCreate.ok) {
-      const t = await runCreate.text();
-      throw new Error(`OpenAI run create error: ${t}`);
+    if (!responseCreate.ok) {
+      const t = await responseCreate.text();
+      throw new Error(`OpenAI response create error: ${t}`);
     }
-    const run = await runCreate.json();
+    const response = await responseCreate.json();
+    
+    // Extract the message content from the response
+    const messageOutput = response.output?.find(item => item.type === "message");
+    const out = messageOutput?.content?.[0]?.text || "<p>Thanks for reaching out.</p>";
 
-    // Short poll so Missive rule doesn't time out
-    let status = run.status;
-    let tries = 0;
-    while ((status === "queued" || status === "in_progress") && tries < 12) {
-      await sleep(1200);
-      const r = await fetch(`${OPENAI_API}/threads/${thread.id}/runs/${run.id}`, {
-        headers: OPENAI_HEADERS,
-      });
-      const j = await r.json();
-      status = j.status;
-      tries++;
-    }
-    if (status !== "completed") {
-      throw new Error(`Assistant run did not complete (status: ${status})`);
-    }
-
-    const msgsResp = await fetch(`${OPENAI_API}/threads/${thread.id}/messages`, {
-      headers: OPENAI_HEADERS,
-    });
-    if (!msgsResp.ok) {
-      const t = await msgsResp.text();
-      throw new Error(`OpenAI messages fetch error: ${t}`);
-    }
-    const threadMsgs = await msgsResp.json();
-    const assistantMsg = threadMsgs.data.find((m) => m.role === "assistant");
-    const out =
-      assistantMsg?.content?.map((c) => c.text?.value || "").join("\n").trim() ||
-      "<p>Thanks for reaching out.</p>";
-
-    // Ensure HTML, then enforce spacing + signature
+    // Ensure HTML, then enforce spacing (signature handled by Missive)
     let finalHtml = /<\/?[a-z][\s\S]*>/i.test(out)
       ? out
       : `<p>${out.replace(/\n/g, "<br/>")}</p>`;
     finalHtml = addParagraphSpacing(finalHtml);
-    finalHtml = appendSignature(finalHtml);
+    // Note: Signature is handled automatically by Missive for hello@tab.travel
 
     // 7) Create the email draft in Missive (force From: hello@tab.travel)
     const draftRes = await fetch(`${MISSIVE_API}/drafts`, {
@@ -303,6 +272,8 @@ If the user asks for "more information" or a general overview (e.g., "send more 
             address: "hello@tab.travel",
             name: "Raghvi",
           },
+          // Ensure the draft is created as a reply in the existing conversation
+          send: false, // Create as draft, don't send immediately
         },
       }),
     });

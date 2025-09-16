@@ -5,5 +5,8 @@
   "license": "MIT",
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "openai": "^4.0.0"
   }
 }
