@@ -14,12 +14,16 @@ async function checkVectorStore() {
   try {
     console.log('🔍 Checking Vector Store...');
     console.log('Vector Store ID:', process.env.VECTOR_STORE_ID);
+    console.log('Type:', typeof process.env.VECTOR_STORE_ID);
+    console.log('String version:', String(process.env.VECTOR_STORE_ID));
     console.log('');
     
     // List files in the vector store
-    const files = await openai.vectorStores.files.list({
-      vector_store_id: String(process.env.VECTOR_STORE_ID)
-    });
+    const vectorStoreId = String(process.env.VECTOR_STORE_ID);
+    console.log('Using vector store ID:', vectorStoreId);
+    
+    // Try a different approach - pass the ID directly as a parameter
+    const files = await openai.vectorStores.files.list(vectorStoreId);
     
     console.log(`📁 Vector store has ${files.data.length} files:`);
     files.data.forEach((file, index) => {

@@ -28,7 +28,7 @@ async function testFileSearch() {
         type: "file_search",
         vector_store_ids: [String(process.env.VECTOR_STORE_ID)]
       }],
-      temperature: 0.3,
+      // Note: temperature not supported with GPT-5 in Responses API
     });
     
     console.log('📊 Response Output:');

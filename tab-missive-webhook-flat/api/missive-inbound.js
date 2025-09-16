@@ -235,7 +235,7 @@ If the user asks for "more information" or a general overview (e.g., "send more 
           type: "file_search",
           vector_store_ids: [String(process.env.VECTOR_STORE_ID)], // Required for file search
         }],
-        temperature: 0.3,
+        // Note: temperature not supported with GPT-5 in Responses API
       }),
     });
     if (!responseCreate.ok) {
