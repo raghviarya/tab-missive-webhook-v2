@@ -41,7 +41,7 @@ function senderLabel(m) {
 
 /** Ensure proper paragraph spacing in Missive: single line between paragraphs. */
 function addParagraphSpacing(html) {
-  return String(html || "").replace(/<\/p>\s*<p>/g, "</p>\n<p>");
+  return String(html || "").replace(/<\/p>\s*<p>/g, "</p><p><br></p><p>");
 }
 
 /** Append the proper Tab signature if it's not already present. */
@@ -189,13 +189,13 @@ If the user asks for "more information" or a general overview (e.g., "send more 
       process.env.SYSTEM_HINT ||
       [
         "You are Tab's email drafting assistant for both customer service and outbound cold emails.",
-        "Use <p> for every paragraph. Keep each paragraph to 2–4 sentences max. Do NOT add extra spacing between paragraphs - just use single line breaks.",
+        "Use <p> for every paragraph. Keep each paragraph to 2–4 sentences max. The system will automatically add proper spacing between paragraphs.",
         "Tone: professional, empathetic, concise, solution-oriented. Prefer 2–4 short paragraphs; use lists for steps.",
         "Do not overpromise. Do not set up accounts or complete tasks for the user; provide guidance and next steps.",
         "Adapt formality to the sender's tone. For complaints: acknowledge, take responsibility where appropriate, give a clear plan to resolve.",
         'IMPORTANT: You have access to file_search which will automatically search your knowledge base files. Use this information to provide accurate responses.',
-        'FIRST, check the "Canned responses" PDF for a relevant response and use it as-is.',
-        'IF no suitable canned response exists, consult "Fin context" via file_search and synthesize an answer.',
+        'PRIORITY ORDER: 1) ALWAYS check "Canned responses.pdf" FIRST - if there is a relevant canned response, use it exactly as written. 2) Only if no suitable canned response exists, then consult "Fin context.pdf" and synthesize an answer.',
+        'When using canned responses, adapt them slightly to the specific customer situation but keep the core message and structure.',
         "Use file_search to ground facts; do not show citations, filenames, or IDs to the customer.",
         "Classification outputs ONLY with high confidence:",
         '- Automated/irrelevant bulk: output exactly "Automated response".',
@@ -272,7 +272,7 @@ If the user asks for "more information" or a general overview (e.g., "send more 
             address: "hello@tab.travel",
             name: "Raghvi",
           },
-          // Ensure the draft is created as a reply in the existing conversation
+          // Missive should automatically handle to_fields, subject, and signature for replies
           send: false, // Create as draft, don't send immediately
         },
       }),
