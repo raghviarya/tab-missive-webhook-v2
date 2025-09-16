@@ -143,9 +143,12 @@ module.exports = async (req, res) => {
     }
     const convo = await convoResp.json();
     const subject = (convo.conversation?.subject || "").trim();
+    console.log("Conversation details:", JSON.stringify(convo, null, 2));
 
     // 3) Fetch full messages (names + bodies) and build the thread text
     const messages = await fetchConversationMessages(convoId);
+    console.log("Messages fetched:", messages.length);
+    console.log("Last message from:", messages[messages.length - 1]?.from_field);
 
     const threadText = clamp(
       messages
@@ -291,8 +294,20 @@ If the user asks for "more information" or a general overview (e.g., "send more 
       body: JSON.stringify({
         drafts: {
           conversation: convoId,
-          body: finalHtml,
+          subject: subject ? `Re: ${subject}` : "Re:",
+          body: appendSignature(finalHtml),
           quote_previous_message: false,
+          from_field: {
+            address: "hello@tab.travel",
+            name: "Raghvi",
+          },
+          to_fields: [
+            {
+              address: messages[messages.length - 1]?.from_field?.address,
+              name: messages[messages.length - 1]?.from_field?.name,
+            },
+          ],
+          send: false,
         },
       }),
     });
@@ -300,6 +315,10 @@ If the user asks for "more information" or a general overview (e.g., "send more 
       const t = await draftRes.text();
       throw new Error(`Missive draft create error: ${t}`);
     }
+    
+    const draft = await draftRes.json();
+    console.log("Draft created:", draft.id);
+    console.log("Draft details:", JSON.stringify(draft, null, 2));
 
     return res.status(200).json({ ok: true });
   } catch (err) {
