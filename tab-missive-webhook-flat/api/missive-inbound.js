@@ -46,7 +46,7 @@ function addParagraphSpacing(html) {
 
 /** Append the proper Tab signature if it's not already present. */
 function appendSignature(html) {
-  const sig = `<p><br></p><p>Kind regards,</p><p>Raghvi</p><p>—</p><p>Tab Support</p><p><br></p><p>Tab.</p><p>business.tab.travel/payments</p><p><br></p><p>Tab Labs Ltd is a company registered in England and Wales. Registered number: 09339113. Registered office: 6th Floor, 1 London Wall, London, EC2Y 5EB, UK.</p>`;
+  const sig = `<p><br></p><p>Kind regards,</p><p>Raghvi</p><p>—</p><p>Tab Support</p><p><br></p><p>Tab.</p><p><a href="https://business.tab.travel/payments">business.tab.travel/payments</a></p><p><br></p><p>Tab Labs Ltd is a company registered in England and Wales. Registered number: 09339113. Registered office: 6th Floor, 1 London Wall, London, EC2Y 5EB, UK.</p>`;
   if (html.includes("Kind regards") && html.includes("Tab Support")) return html;
   return html + sig;
 }
@@ -144,6 +144,9 @@ module.exports = async (req, res) => {
     const convo = await convoResp.json();
     const subject = (convo.conversation?.subject || "").trim();
     console.log("Conversation details:", JSON.stringify(convo, null, 2));
+    console.log("Raw subject from API:", convo.conversation?.subject);
+    console.log("Processed subject:", subject);
+    console.log("Subject length:", subject.length);
 
     // 3) Fetch full messages (names + bodies) and build the thread text
     const messages = await fetchConversationMessages(convoId);
@@ -285,6 +288,8 @@ If the user asks for "more information" or a general overview (e.g., "send more 
     // Note: Signature is handled automatically by Missive for hello@tab.travel
 
     // 7) Create the email draft in Missive (force From: hello@tab.travel)
+    const draftSubject = subject ? `Re: ${subject}` : "Re:";
+    console.log("Draft subject being sent:", draftSubject);
     const draftRes = await fetch(`${MISSIVE_API}/drafts`, {
       method: "POST",
       headers: {
@@ -294,7 +299,7 @@ If the user asks for "more information" or a general overview (e.g., "send more 
       body: JSON.stringify({
         drafts: {
           conversation: convoId,
-          subject: subject ? `Re: ${subject}` : "Re:",
+          subject: draftSubject,
           body: appendSignature(finalHtml),
           quote_previous_message: false,
           from_field: {
