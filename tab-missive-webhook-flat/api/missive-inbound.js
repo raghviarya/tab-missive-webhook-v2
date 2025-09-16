@@ -233,7 +233,7 @@ If the user asks for "more information" or a general overview (e.g., "send more 
         input: userMessage,
         tools: [{
           type: "file_search",
-          vector_store_ids: [process.env.VECTOR_STORE_ID], // Required for file search
+          vector_store_ids: [String(process.env.VECTOR_STORE_ID)], // Required for file search
         }],
         temperature: 0.3,
       }),
@@ -243,6 +243,17 @@ If the user asks for "more information" or a general overview (e.g., "send more 
       throw new Error(`OpenAI response create error: ${t}`);
     }
     const response = await responseCreate.json();
+    
+    // Debug: Log the full response to see if file search was used
+    console.log('OpenAI Response:', JSON.stringify(response, null, 2));
+    
+    // Check if file search was used
+    const fileSearchOutput = response.output?.find(item => item.type === "file_search_call");
+    if (fileSearchOutput) {
+      console.log('File search was used:', fileSearchOutput);
+    } else {
+      console.log('WARNING: No file search was used in this response');
+    }
     
     // Extract the message content from the response
     const messageOutput = response.output?.find(item => item.type === "message");
