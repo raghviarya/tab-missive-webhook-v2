@@ -186,29 +186,98 @@ module.exports = async (req, res) => {
       return url.includes("?") ? `${url}&${UTM_SUFFIX}` : `${url}?${UTM_SUFFIX}`;
     }
 
+    // Add these tiny helpers above detectCtaPath (anywhere near your other helpers)
+    function fold(str = "") {
+      // Accent/diacritic-insensitive search (é → e, ç → c, ã → a, etc.)
+      return String(str).normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    }
+    function haystack(text = "", subj = "") {
+      const raw = `${subj}\n${text}`;
+      return {
+        lower: raw.toLowerCase(),
+        foldLower: fold(raw).toLowerCase(),
+      };
+    }
+    function testAny(hay, ...regexes) {
+      return regexes.some((rx) => rx.test(hay.lower) || rx.test(hay.foldLower));
+    }
+    
+    // Replace your existing detectCtaPath with this multilingual version
     function detectCtaPath(text = "", subj = "") {
-      const hay = `${subj}\n${text}`.toLowerCase();
-
-      // in-person (phone, card reader, POS, on-site etc.)
-      if (/(in[-\s]?person|face\s?to\s?face|pos|card\s?(reader|machine)|take payments (on|with) (phone|mobile)|tap\s?to\s?pay|pay\s?by\s?phone|in store|on[-\s]?site)/i.test(hay)) {
+      const hay = haystack(text, subj);
+    
+      // ===== In-person (phone/card reader/POS/on-site) =====
+      // EN: in-person, face to face, POS, card reader, tap to pay, pay by phone, in store, on-site
+      // ES: en persona, presencial, en tienda, en el sitio, TPV, datáfono, lector de tarjetas, pagar por teléfono
+      // PT: presencial, em pessoa, na loja, no local, POS, maquininha, leitor de cartao, pagar por telefone
+      // FR: en personne, en magasin, sur place, TPE, lecteur de carte, paiement par telephone, sans contact
+      if (
+        testAny(
+          hay,
+          /(in[-\s]?person|face\s?to\s?face|pos\b|card\s?(reader|machine)|tap\s?to\s?pay|pay\s?by\s?phone|in\s?store|on[-\s]?site)/i,
+          /(en\s?persona|presencial|en\s?t(ienda|ienda)|en\s?el\s?sitio|tpv|datafono|dat[aá]fono|lector\s?de\s?tarjetas|pagar\s?por\s?telefono|pago\s?por\s?telefono)/i,
+          /(presencial|em\s?pessoa|na\s?loja|no\s?local|pos\b|maquininha|leitor\s?de\s?cart[aã]o|pagar\s?por\s?tele(fo|f)ne)/i,
+          /(en\s?personne|en\s?magasin|sur\s?place|tpe\b|lecteur\s?de\s?carte|paiement\s?par\s?tele(fo|f)ne|sans\s?contact)/i
+        )
+      ) {
         return "/features/in-person";
       }
-      // integrations (external platforms/channels)
-      if (/(integration|integrations|integrate|plugin|plug[-\s]?in|connect with|works with|supports .* (channel|partner)|pms|booking\.com|airbnb|xero|quickbooks)/i.test(hay)) {
+    
+      // ===== Integrations (external platforms) =====
+      // EN: integration, plugin, connect with, works with, PMS, Booking.com, Airbnb, Xero, QuickBooks
+      // ES: integracion/es, integrar, plugin, conector, conectar con, funciona con, PMS
+      // PT: integra(ç|c)ao/oes, integrar, plugin, conectar com, funciona com, PMS
+      // FR: intégration(s), intégrer, plugin, se connecter à, fonctionne avec, PMS
+      if (
+        testAny(
+          hay,
+          /(integration|integrations|integrate|plugin|plug[-\s]?in|connect\s?with|works\s?with|supports|pms|booking\.com|airbnb|xero|quickbooks)/i,
+          /(integraci[oó]n|integraciones|integrar|plugin|plug[-\s]?in|conector|conectar\s?con|funciona\s?con|pms|booking\.com|airbnb|xero|quickbooks)/i,
+          /(integra[cç][aã]o|integra[cç][oõ]es|integrar|plugin|plug[-\s]?in|conectar\s?com|funciona\s?com|pms|booking\.com|airbnb|xero|quickbooks)/i,
+          /(int[eé]gration|int[eé]grations|int[eé]grer|plugin|plug[-\s]?in|se\s?connecter\s?[aà]|fonctionne\s?avec|pms|booking\.com|airbnb|xero|quickbooks)/i
+        )
+      ) {
         return "/features/integrations";
       }
-      // accept payments on website / checkout flow
-      if (/(website|on your website|on my site|checkout|online payments|payment (form|page)|embed|accept payments online)/i.test(hay)) {
+    
+      // ===== On your website (online / checkout / payment page) =====
+      // EN: website, on your site, checkout, online payments, payment form/page, accept payments online
+      // ES: sitio web, en su/mi sitio, en la web, pagos online/en linea, checkout, p(a|á)gina/formulario de pago
+      // PT: site/website, no seu/meu site, pagamentos online, checkout, p(a|á)gina/formul(a|á)rio de pagamento
+      // FR: site web, sur votre/mon site, en ligne, paiements en ligne, page/formulaire de paiement
+      if (
+        testAny(
+          hay,
+          /(website|on\s?(your|my)\s?(website|site)|checkout|online\s?payments|payment\s?(form|page)|accept\s?payments\s?online)/i,
+          /(sitio\s?web|en\s?(su|mi)\s?sitio|en\s?la\s?web|pagos?\s?(online|en\s?linea)|checkout|p[aá]gina\s?de\s?pago|formulario\s?de\s?pago|aceptar\s?pagos?\s?en\s?l[ií]nea)/i,
+          /(site|website|no\s?(seu|meu)\s?site|pagamentos?\s?online|checkout|p[aá]gina\s?de\s?pagamento|formul[aá]rio\s?de\s?pagamento|aceitar\s?pagamentos?\s?online)/i,
+          /(site\s?web|sur\s?(votre|mon)\s?site|en\s?ligne|paiements?\s?en\s?ligne|page\s?de\s?paiement|formulaire\s?de\s?paiement|accepter\s?les\s?paiements?\s?en\s?ligne)/i
+        )
+      ) {
         return "/features/on-your-website";
       }
-      // payment links / invoices / advance payments
-      if (/(payment link|pay link|link to pay|invoice|request (a )?payment|advance payment|pay in advance|deposit request)/i.test(hay)) {
+    
+      // ===== Payment links / in advance / invoices / deposits =====
+      // EN: payment link, link to pay, invoice, request a payment, advance payment, deposit
+      // ES: enlace/link de pago, enlace para pagar, factura, solicitud de pago, pago por adelantado, anticipo, deposito
+      // PT: link de pagamento, link para pagar, fatura, pedido de pagamento, pagamento adiantado, adiantamento
+      // FR: lien de paiement, lien pour payer, facture, demande de paiement, paiement a l'avance, acompte
+      if (
+        testAny(
+          hay,
+          /(payment\s?link|pay\s?link|link\s?to\s?pay|invoice|request\s?(a\s?)?payment|advance\s?payment|deposit\s?request)/i,
+          /(enlace\s?de\s?pago|link\s?de\s?pago|enlace\s?para\s?pagar|factura|solicitud\s?de\s?pago|pago\s?por\s?adelantado|anticipo|dep[oó]sito)/i,
+          /(link\s?de\s?pagamento|link\s?para\s?pagar|fatura|pedido\s?de\s?pagamento|pagamento\s?adiantado|adiantamento)/i,
+          /(lien\s?de\s?paiement|lien\s?pour\s?payer|facture|demande\s?de\s?paiement|paiement\s?a\s?l[’']?avance|acompte)/i
+        )
+      ) {
         return "/features/in-advance";
       }
-      // default to homepage if unsure
+    
+      // Default to homepage if unsure
       return "/";
     }
-
+    
     const suggestedPath = detectCtaPath(threadText, subject);
     const SUGGESTED_CTA_URL = withUtms(joinUrl(suggestedPath));
     const HOMEPAGE_URL = withUtms(joinUrl("/"));
