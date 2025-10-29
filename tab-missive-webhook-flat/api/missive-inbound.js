@@ -170,16 +170,48 @@ module.exports = async (req, res) => {
         .join("\n\n------------------------\n\n")
     );
 
-    // === Prompt: refined rules + CTA logic ===
-    const PAYMENTS_URL =
-      "https://business.tab.travel/payments?show=true&referrer_code=PaymentsR17&utm_source=Missive&utm_medium=email&utm_campaign=PaymentsR17";
-    const CHECKOUT_URL =
-      "https://business.tab.travel/checkout-flow?show=true&referrer_code=CheckoutR3&utm_source=Missive&utm_medium=email&utm_campaign=CheckoutR3";
+    // === Destination & UTM logic (single standard, smart routing) ===
+    const WEBSITE_BASE = "https://business.tab.travel";
+    const UTM_SUFFIX = "show=true&referrer_code=F25&utm_source=Missive&utm_medium=email&utm_campaign=F25";
 
-    const suggestCheckout =
-      /checkout/i.test(subject) || /checkout/i.test(threadText);
-    const SUGGESTED_CTA_URL = suggestCheckout ? CHECKOUT_URL : PAYMENTS_URL;
-    const SUGGESTED_CTA_LABEL = "Apply now";
+    function joinUrl(path = "") {
+      // ensure single slash between base and path
+      const base = WEBSITE_BASE.replace(/\/+$/, "");
+      const cleanPath = String(path || "/").replace(/^\/*/, "/");
+      return `${base}${cleanPath}`;
+    }
+
+    function withUtms(url) {
+      // append ? or & depending on whether there are existing params
+      return url.includes("?") ? `${url}&${UTM_SUFFIX}` : `${url}?${UTM_SUFFIX}`;
+    }
+
+    function detectCtaPath(text = "", subj = "") {
+      const hay = `${subj}\n${text}`.toLowerCase();
+
+      // in-person (phone, card reader, POS, on-site etc.)
+      if (/(in[-\s]?person|face\s?to\s?face|pos|card\s?(reader|machine)|take payments (on|with) (phone|mobile)|tap\s?to\s?pay|pay\s?by\s?phone|in store|on[-\s]?site)/i.test(hay)) {
+        return "/features/in-person";
+      }
+      // integrations (external platforms/channels)
+      if (/(integration|integrations|integrate|plugin|plug[-\s]?in|connect with|works with|supports .* (channel|partner)|pms|booking\.com|airbnb|xero|quickbooks)/i.test(hay)) {
+        return "/features/integrations";
+      }
+      // accept payments on website / checkout flow
+      if (/(website|on your website|on my site|checkout|online payments|payment (form|page)|embed|accept payments online)/i.test(hay)) {
+        return "/features/on-your-website";
+      }
+      // payment links / invoices / advance payments
+      if (/(payment link|pay link|link to pay|invoice|request (a )?payment|advance payment|pay in advance|deposit request)/i.test(hay)) {
+        return "/features/in-advance";
+      }
+      // default to homepage if unsure
+      return "/";
+    }
+
+    const suggestedPath = detectCtaPath(threadText, subject);
+    const SUGGESTED_CTA_URL = withUtms(joinUrl(suggestedPath));
+    const HOMEPAGE_URL = withUtms(joinUrl("/"));
 
     const FALLBACK_OVERVIEW = `
 If the user asks for "more information" or a general overview (e.g., "send more info", "tell me more"):
@@ -190,7 +222,8 @@ If the user asks for "more information" or a general overview (e.g., "send more 
     <li>Core benefits (2–4 bullets)</li>
     <li>What the user can do next (1–2 bullets)</li>
   </ul>
-- End with a CTA hyperlink: <a href="${SUGGESTED_CTA_URL}">${SUGGESTED_CTA_LABEL}</a>.
+- Close with a friendly, integrated CTA sentence (no button):
+  <p>You can find out more and apply on <a href="${SUGGESTED_CTA_URL}">our website</a> — we look forward to working with you!</p>
 - Do NOT say "I don't know" in these generic cases; use available high-level info from files and prior messages.
 `.trim();
 
@@ -199,13 +232,14 @@ If the user asks for "more information" or a general overview (e.g., "send more 
       [
         "You are Tab's email drafting assistant for both customer service and outbound cold emails.",
         "Use <p> for every paragraph. Keep each paragraph to 2–4 sentences max. The system will automatically add proper spacing between paragraphs.",
-        "Tone: professional, empathetic, concise, solution-oriented. Prefer 2–4 short paragraphs; use lists for steps.",
+        "Tone: professional, friendly, polished, formal, and sales-driven. Prefer 2–4 short paragraphs; use lists for steps.",
         "Do not overpromise. Do not set up accounts or complete tasks for the user; provide guidance and next steps.",
         "Adapt formality to the sender's tone. For complaints: acknowledge, take responsibility where appropriate, give a clear plan to resolve.",
         'IMPORTANT: You have access to file_search which will automatically search your knowledge base files. Use this information to provide accurate responses.',
         'PRIORITY ORDER: 1) ALWAYS check "Canned responses.pdf" FIRST - if there is a relevant canned response, use it exactly as written. 2) Only if no suitable canned response exists, then consult "Fin context.pdf" and synthesize an answer.',
         'When using canned responses, adapt them slightly to the specific customer situation but keep the core message and structure.',
         "Use file_search to ground facts; do not show citations, filenames, or IDs to the customer.",
+        "Always open with a greeting: 'Hi {FirstName},' if the sender's first name is known, else 'Hi there,'.",
         "FIRST, ALWAYS check for these classifications before drafting any reply:",
         '- Automated/irrelevant bulk emails: output ONLY "Automated response" (nothing else)',
         '- Spam/phishing attempts: output ONLY "spam" (nothing else)',
@@ -213,7 +247,16 @@ If the user asks for "more information" or a general overview (e.g., "send more 
         '- Explicit WhatsApp handoff requests with phone number: output ONLY "Whatsapp" (nothing else)',
         "ONLY if none of these classifications apply, then proceed to draft a helpful reply.",
         'Only output "I don\'t know" for a specific fact/policy that is truly unknown; not for generic "more info" asks.',
-        `When appropriate, include a CTA hyperlink "${SUGGESTED_CTA_LABEL}". If thread/subject mentions checkout, use ${CHECKOUT_URL}, else ${PAYMENTS_URL}.`,
+        "CTA POLICY:",
+        "- Use a single link policy with F25 UTMs and business.tab.travel prefix.",
+        "- Auto-select the destination based on message content:",
+        `  • In-person payments → ${withUtms(joinUrl("/features/in-person"))}`,
+        `  • Integrations → ${withUtms(joinUrl("/features/integrations"))}`,
+        `  • On your website → ${withUtms(joinUrl("/features/on-your-website"))}`,
+        `  • Payment links / in advance → ${withUtms(joinUrl("/features/in-advance"))}`,
+        `  • Default (unsure) → ${HOMEPAGE_URL}`,
+        "- Do NOT add a standalone 'Apply now' button/line. Instead close with:",
+        `  'You can find out more and apply on <a href="${SUGGESTED_CTA_URL}">our website</a> — we look forward to working with you!'`,
         FALLBACK_OVERVIEW,
       ].join(" ");
 
@@ -234,9 +277,8 @@ If the user asks for "more information" or a general overview (e.g., "send more 
       "Search for terms related to the customer's message and the conversation context.",
       "",
       "CTA POLICY:",
-      `- Default CTA: <a href="${PAYMENTS_URL}">Apply now</a>`,
-      `- If thread/subject mentions checkout: <a href="${CHECKOUT_URL}">Apply now</a>`,
-      `- Suggested CTA for this thread: <a href="${SUGGESTED_CTA_URL}">Apply now</a>`,
+      `- Suggested destination for this thread (auto-selected): ${SUGGESTED_CTA_URL}`,
+      "- Close with the integrated CTA sentence linking the phrase 'our website' (not a button).",
       "",
       "CONTEXT (FULL THREAD, oldest → newest):",
       threadText,
@@ -254,10 +296,10 @@ If the user asks for "more information" or a general overview (e.g., "send more 
       tool_choice: "auto", // Ensure tools are used automatically
       // Note: temperature not supported with GPT-5 in Responses API
     };
-    
+
     console.log('Request body:', JSON.stringify(requestBody, null, 2));
     console.log('Vector store ID being used:', String(process.env.VECTOR_STORE_ID));
-    
+
     const responseCreate = await fetch(`${OPENAI_API}/responses`, {
       method: "POST",
       headers: OPENAI_HEADERS,
@@ -268,10 +310,10 @@ If the user asks for "more information" or a general overview (e.g., "send more 
       throw new Error(`OpenAI response create error: ${t}`);
     }
     const response = await responseCreate.json();
-    
+
     // Debug: Log the full response to see if file search was used
     console.log('OpenAI Response:', JSON.stringify(response, null, 2));
-    
+
     // Check if file search was used
     const fileSearchOutput = response.output?.find(item => item.type === "file_search_call");
     if (fileSearchOutput) {
@@ -279,21 +321,45 @@ If the user asks for "more information" or a general overview (e.g., "send more 
     } else {
       console.log('WARNING: No file search was used in this response');
     }
-    
+
     // Extract the message content from the response
     const messageOutput = response.output?.find(item => item.type === "message");
     const out = messageOutput?.content?.[0]?.text || "<p>Thanks for reaching out.</p>";
 
-    // Ensure HTML, then enforce spacing (signature handled by Missive)
-    let finalHtml = /<\/?[a-z][\s\S]*>/i.test(out)
-      ? out
-      : `<p>${out.replace(/\n/g, "<br/>")}</p>`;
+    // === Greeting enforcement ===
+    function firstNameFrom(message) {
+      const full =
+        message?.from_field?.name ||
+        message?.creator?.name ||
+        (message?.from_field?.address || message?.creator?.email || "")
+          .split("@")[0]
+          .replace(/\./g, " ")
+          || "";
+      const first = String(full).trim().split(/\s+/)[0];
+      return first ? first.charAt(0).toUpperCase() + first.slice(1) : "";
+    }
+    const lastMsg = messages[messages.length - 1];
+    const recipientFirst = firstNameFrom(lastMsg);
+    const greetingHtml = `<p>Hi ${recipientFirst || "there"},</p>`;
+
+    // Ensure HTML, then enforce spacing
+    let finalHtml = /<\/?[a-z][\s\S]*>/i.test(out) ? out : `<p>${out.replace(/\n/g, "<br/>")}</p>`;
+    // Prepend greeting if missing
+    if (!/^<p>\s*hi\b/i.test(finalHtml)) {
+      finalHtml = greetingHtml + finalHtml;
+    }
+    // Append integrated CTA sentence if no business.tab.travel link exists
+    const ctaSentence = `<p>You can find out more and apply on <a href="${SUGGESTED_CTA_URL}">our website</a> — we look forward to working with you!</p>`;
+    if (!/business\.tab\.travel/i.test(finalHtml)) {
+      finalHtml = finalHtml + ctaSentence;
+    }
+    // Missive spacing normalisation
     finalHtml = addParagraphSpacing(finalHtml);
     // Note: Signature is handled automatically by Missive for hello@tab.travel
 
     // 7) Create the email draft in Missive (force From: hello@tab.travel)
     // Don't add "Re:" if the subject already starts with "Re:"
-    const draftSubject = subject 
+    const draftSubject = subject
       ? (subject.toLowerCase().startsWith('re:') ? subject : `Re: ${subject}`)
       : "Re:";
     console.log("Draft subject being sent:", draftSubject);
@@ -327,7 +393,7 @@ If the user asks for "more information" or a general overview (e.g., "send more 
       const t = await draftRes.text();
       throw new Error(`Missive draft create error: ${t}`);
     }
-    
+
     const draft = await draftRes.json();
     console.log("Draft created:", draft.id);
     console.log("Draft details:", JSON.stringify(draft, null, 2));
