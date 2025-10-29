@@ -215,9 +215,11 @@ module.exports = async (req, res) => {
         testAny(
           hay,
           /(in[-\s]?person|face\s?to\s?face|pos\b|card\s?(reader|machine)|tap\s?to\s?pay|pay\s?by\s?phone|in\s?store|on[-\s]?site)/i,
-          /(en\s?persona|presencial|en\s?t(ienda|ienda)|en\s?el\s?sitio|tpv|datafono|dat[aá]fono|lector\s?de\s?tarjetas|pagar\s?por\s?telefono|pago\s?por\s?telefono)/i,
-          /(presencial|em\s?pessoa|na\s?loja|no\s?local|pos\b|maquininha|leitor\s?de\s?cart[aã]o|pagar\s?por\s?tele(fo|f)ne)/i,
-          /(en\s?personne|en\s?magasin|sur\s?place|tpe\b|lecteur\s?de\s?carte|paiement\s?par\s?tele(fo|f)ne|sans\s?contact)/i
+          /(en\s?persona|presencial|en\s?tienda|en\s?el\s?sitio|tpv|datafono|dat[aá]fono|lector\s?de\s?tarjetas|pagar\s?por\s?telefono|pago\s?por\s?telefono)/i,
+          /(presencial|em\s?pessoa|na\s?loja|no\s?local|pos\b|maquininha|leitor\s?de\s?cart[aã]o|pagar\s?por\s?tele(?:pho|fo)ne
+)/i,
+          /(en\s?personne|en\s?magasin|sur\s?place|tpe\b|lecteur\s?de\s?carte|paiement\s?par\s?tele(?:pho|fo)ne
+|sans\s?contact)/i
         )
       ) {
         return "/features/in-person";
