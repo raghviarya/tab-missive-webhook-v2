@@ -121,7 +121,7 @@ async function fetchConversationMessages(conversationId) {
   return collected;
 }
 
-module.exports = async (req, res) => {
+export default async function handler(req, res) {
   try {
     // Health check / GET ping
     if (req.method !== "POST") return res.status(200).send("ok");
@@ -474,4 +474,4 @@ If the user asks for "more information" or a general overview (e.g., "send more 
     console.error(err);
     return res.status(500).json({ error: String(err?.message || err) });
   }
-};
+}
