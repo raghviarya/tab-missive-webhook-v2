@@ -59,7 +59,7 @@ function appendSignature(html) {
  */
 async function fetchConversationMessages(conversationId) {
   const limit = 10; // Missive max for this endpoint
-  const MAX_PAGES = 6; // Cap total (6 * 10 = 60 messages) — adjust if you like
+  const MAX_PAGES = 6; // Cap total (6 * 10 = 60 messages)
   let until = undefined; // pagination cursor (oldest delivered_at from previous page)
   let collected = [];
   let pages = 0;
@@ -93,7 +93,7 @@ async function fetchConversationMessages(conversationId) {
           throw new Error(`Missive get message ${id} failed: ${t}`);
         }
         const j = await msgResp.json();
-        // Single message object may be returned as { message: {...} } (most orgs) or { messages: {...} }
+        // Single message object may be returned as { message: {...} } or { messages: {...} }
         return j?.message || j?.messages || j;
       })
     );
@@ -114,6 +114,112 @@ async function fetchConversationMessages(conversationId) {
   // Present oldest→newest for the model
   collected.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
   return collected;
+}
+
+/* =========================
+   NEW small helpers (greeting target & structure)
+   ========================= */
+
+/** Does an address belong to Tab? */
+function isFromTabAddress(addr = "") {
+  const a = String(addr).toLowerCase().trim();
+  return a.endsWith("@tab.travel") || a === "hello@tab.travel";
+}
+
+/** Is a message from Tab (internal)? */
+function isFromTab(m = {}) {
+  const addr = m?.from_field?.address || m?.creator?.email || "";
+  return isFromTabAddress(addr);
+}
+
+/** Latest message from the external sender (not Tab). */
+function getReplyTarget(messages = []) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (!isFromTab(m)) return m;
+  }
+  // Fallback: last message if all internal
+  return messages[messages.length - 1];
+}
+
+/** Extract first name for greeting. */
+function firstNameFrom(message) {
+  const full =
+    message?.from_field?.name ||
+    message?.creator?.name ||
+    (message?.from_field?.address || message?.creator?.email || "")
+      .split("@")[0]
+      .replace(/\./g, " ") ||
+    "";
+  const first = String(full).trim().split(/\s+/)[0];
+  return first ? first.charAt(0).toUpperCase() + first.slice(1) : "";
+}
+
+/** Strip to plain text (rough). */
+function stripToPlainText(html = "") {
+  return String(html).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/** Detect if reply already starts with a greeting. */
+function startsWithGreeting(html = "") {
+  const text = stripToPlainText(html).toLowerCase();
+  return /^(hi|hello|dear)\b/.test(text);
+}
+
+/** Personalise "Hi there," to "Hi Name," if we have a name. */
+function personalizeExistingGreeting(html = "", name = "") {
+  if (!name) return html;
+  return html
+    .replace(/(<p>)(\s*hi\s+there\s*,?\s*)(<\/p>)/i, `$1Hi ${name},$3`)
+    .replace(/^(\s*)hi\s+there\s*,?/i, `Hi ${name},`);
+}
+
+/** If duplicate greetings occur back-to-back, keep the first. */
+function dedupeGreetings(html = "") {
+  return html.replace(
+    /(<p>\s*(?:hi|hello|dear)[^<]*<\/p>)\s*(<p>\s*(?:hi|hello|dear)[^<]*<\/p>)/i,
+    "$1"
+  );
+}
+
+/** Ensure multi-paragraph structure and basic bullets if needed. */
+function ensureReadableStructure(html = "") {
+  const hasList = /<(ul|ol)\b/i.test(html);
+  const pCount = (html.match(/<p\b/gi) || []).length;
+
+  // Convert simple "- " or "• " lines to <ul><li>…</li></ul> if no list exists
+  const plain = stripHtml(html);
+  const dashListRegex = /(^|\n|\r)(?:-|\u2022)\s+\S+/m;
+  if (!hasList && dashListRegex.test(plain)) {
+    const lines = plain.split(/\s*[\r\n]+\s*/);
+    const items = lines
+      .filter((l) => /^(-|\u2022)\s+/.test(l))
+      .map((l) => l.replace(/^(-|\u2022)\s+/, "").trim());
+    if (items.length >= 2) {
+      const ul = `<ul>${items.map((i) => `<li>${i}</li>`).join("")}</ul>`;
+      html += ul;
+    }
+  }
+
+  // If it's effectively one paragraph, split into short <p> chunks
+  if (pCount <= 1) {
+    const sentences = plain.split(/(?<=[.!?])\s+(?=[A-Z])/);
+    if (sentences.length > 2) {
+      const chunks = [];
+      let buf = [];
+      sentences.forEach((s) => {
+        buf.push(s);
+        if (buf.length >= 2) {
+          chunks.push(buf.join(" "));
+          buf = [];
+        }
+      });
+      if (buf.length) chunks.push(buf.join(" "));
+      html = chunks.map((c) => `<p>${c}</p>`).join("");
+    }
+  }
+
+  return html;
 }
 
 module.exports = async (req, res) => {
@@ -161,9 +267,10 @@ module.exports = async (req, res) => {
         .join("\n\n------------------------\n\n")
     );
 
-    // === NEW: CTA routing (no checkout split), UTM, greeting & integrated CTA ===
+    /* === NEW: CTA routing (single scheme), UTM F25 === */
     const WEBSITE_BASE = "https://business.tab.travel";
-    const UTM_SUFFIX = "show=true&referrer_code=F25&utm_source=Missive&utm_medium=email&utm_campaign=F25";
+    const UTM_SUFFIX =
+      "show=true&referrer_code=F25&utm_source=Missive&utm_medium=email&utm_campaign=F25";
 
     const joinUrl = (path = "/") =>
       `${WEBSITE_BASE.replace(/\/+$/, "")}${String(path || "/").replace(/^\/*/, "/")}`;
@@ -175,7 +282,8 @@ module.exports = async (req, res) => {
       const raw = `${subj}\n${text}`;
       return { lower: raw.toLowerCase(), foldLower: fold(raw).toLowerCase() };
     };
-    const testAny = (hay, ...regexes) => regexes.some((rx) => rx.test(hay.lower) || rx.test(hay.foldLower));
+    const testAny = (hay, ...regexes) =>
+      regexes.some((rx) => rx.test(hay.lower) || rx.test(hay.foldLower));
 
     function detectCtaPath(text = "", subj = "") {
       const hay = haystack(text, subj);
@@ -224,7 +332,7 @@ module.exports = async (req, res) => {
         testAny(
           hay,
           /(payment\s?link|pay\s?link|link\s?to\s?pay|invoice|request\s?(a\s?)?payment|advance\s?payment|deposit\s?request)/i,
-         /(enlace\s?de\s?pago|link\s?de\s?pago|factura|solicitud\s?de\s?pago|pago\s?por\s?adelantado|anticipo|dep[oó]sito)/i,
+          /(enlace\s?de\s?pago|link\s?de\s?pago|factura|solicitud\s?de\s?pago|pago\s?por\s?adelantado|anticipo|dep[oó]sito)/i,
           /(link\s?de\s?pagamento|fatura|pedido\s?de\s?pagamento|pagamento\s?adiantado|adiantamento)/i,
           /(lien\s?de\s?paiement|facture|demande\s?de\s?paiement|paiement\s?a\s?l[’']?avance|acompte)/i
         )
@@ -269,9 +377,10 @@ If the user asks for "more information" or a general overview (e.g., "send more 
       '- Explicit WhatsApp handoff requests with phone number: output ONLY "Whatsapp" (nothing else)',
       "ONLY if none of these classifications apply, then proceed to draft a helpful reply.",
       'Only output "I don\'t know" for a specific fact/policy that is truly unknown; not for generic "more info" asks.',
-      // NEW guidance:
+      // NEW structure & CTA guidance
+      "Structure: Start with a greeting paragraph, then 1–2 short paragraphs, use a bulleted list for steps/options when relevant, then a closing sentence with the inline ‘our website’ link. Avoid a single-paragraph reply.",
       "Start with a short greeting (e.g., 'Hi <first name>,' or 'Hi there,').",
-      "Close with a friendly, integrated line that links inline: “You can find out more and apply on <a href=\"${SUGGESTED_CTA_URL}\">our website</a> — we look forward to working with you!” (do not place a standalone 'Apply now' line).",
+      `Close with a friendly, integrated line that links inline: “You can find out more and apply on <a href=\\"${SUGGESTED_CTA_URL}\\">our website</a> — we look forward to working with you!” (do not place a standalone 'Apply now' line).`,
       "Link routing policy: default to https://business.tab.travel/ with UTM F25. If the message is about: in-person payments ➜ /features/in-person; integrations (external platforms) ➜ /features/integrations; accepting payments on website ➜ /features/on-your-website; payment links or invoices ➜ /features/in-advance. Use the provided SUGGESTED_CTA_URL.",
       FALLBACK_OVERVIEW,
     ].join(" ");
@@ -336,37 +445,29 @@ If the user asks for "more information" or a general overview (e.g., "send more 
     const messageOutput = response.output?.find((item) => item.type === "message");
     const out = messageOutput?.content?.[0]?.text || "<p>Thanks for reaching out.</p>";
 
-    // === Post-process to enforce greeting + integrated CTA (no standalone 'Apply now') ===
-    function firstNameFrom(message) {
-      const full =
-        message?.from_field?.name ||
-        message?.creator?.name ||
-        (message?.from_field?.address || message?.creator?.email || "")
-          .split("@")[0]
-          .replace(/\./g, " ") ||
-        "";
-      const first = String(full).trim().split(/\s+/)[0];
-      return first ? first.charAt(0).toUpperCase() + first.slice(1) : "";
+    // === Greeting + integrated CTA + structure enforcement ===
+    const replyTarget = getReplyTarget(messages);
+    const recipientFirst = firstNameFrom(replyTarget);
+    const ourGreeting = `<p>Hi ${recipientFirst || "there"},</p>`;
+
+    let finalHtml = /<\/?[a-z][\s\S]*>/i.test(out) ? out : `<p>${out.replace(/\n/g, "<br/>")}</p>`;
+
+    if (startsWithGreeting(finalHtml)) {
+      finalHtml = personalizeExistingGreeting(finalHtml, recipientFirst);
+    } else {
+      finalHtml = ourGreeting + finalHtml;
     }
-    const lastMsg = messages[messages.length - 1];
-    const recipientFirst = firstNameFrom(lastMsg);
-    const greetingHtml = `<p>Hi ${recipientFirst || "there"},</p>`;
+    finalHtml = dedupeGreetings(finalHtml);
 
-    let finalHtml =
-      /<\/?[a-z][\s\S]*>/i.test(out) ? out : `<p>${out.replace(/\n/g, "<br/>")}</p>`;
-
-    // Prepend greeting if the model didn't start with one
-    if (!/^<p>\s*hi\b/i.test(finalHtml)) {
-      finalHtml = greetingHtml + finalHtml;
-    }
-
-    // Ensure we include the integrated CTA sentence if there's no business.tab.travel link already
     const ctaSentence = `<p>You can find out more and apply on <a href="${SUGGESTED_CTA_URL}">our website</a> — we look forward to working with you!</p>`;
     if (!/business\.tab\.travel/i.test(finalHtml)) {
       finalHtml += ctaSentence;
     }
 
-    // Enforce spacing
+    // Ensure readable multi-paragraph structure and bullets when appropriate
+    finalHtml = ensureReadableStructure(finalHtml);
+
+    // Enforce Missive spacing
     finalHtml = addParagraphSpacing(finalHtml);
 
     // 7) Create the email draft in Missive (force From: hello@tab.travel)
@@ -391,8 +492,8 @@ If the user asks for "more information" or a general overview (e.g., "send more 
           from_field: { address: "hello@tab.travel", name: "Raghvi" },
           to_fields: [
             {
-              address: messages[messages.length - 1]?.from_field?.address,
-              name: messages[messages.length - 1]?.from_field?.name,
+              address: replyTarget?.from_field?.address,
+              name: replyTarget?.from_field?.name,
             },
           ],
           send: false,
