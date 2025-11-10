@@ -59,7 +59,7 @@ function appendSignature(html) {
  */
 async function fetchConversationMessages(conversationId) {
   const limit = 10; // Missive max for this endpoint
-  const MAX_PAGES = 6; // Cap total (6 * 10 = 60 messages)
+  const MAX_PAGES = 6; // Cap total (6 * 10 = 60 messages) — adjust if you like
   let until = undefined; // pagination cursor (oldest delivered_at from previous page)
   let collected = [];
   let pages = 0;
@@ -93,7 +93,7 @@ async function fetchConversationMessages(conversationId) {
           throw new Error(`Missive get message ${id} failed: ${t}`);
         }
         const j = await msgResp.json();
-        // Single message object may be returned as { message: {...} } or { messages: {...} }
+        // Single message object may be returned as { message: {...} } (most orgs) or { messages: {...} }
         return j?.message || j?.messages || j;
       })
     );
@@ -116,33 +116,23 @@ async function fetchConversationMessages(conversationId) {
   return collected;
 }
 
-/* =========================
-   NEW small helpers (greeting target & structure)
-   ========================= */
-
-/** Does an address belong to Tab? */
+/* ======== minimal helpers added (recipient + greeting + routing) ======== */
 function isFromTabAddress(addr = "") {
   const a = String(addr).toLowerCase().trim();
   return a.endsWith("@tab.travel") || a === "hello@tab.travel";
 }
-
-/** Is a message from Tab (internal)? */
 function isFromTab(m = {}) {
   const addr = m?.from_field?.address || m?.creator?.email || "";
   return isFromTabAddress(addr);
 }
-
-/** Latest message from the external sender (not Tab). */
+/** Latest message from the *external* sender (not Tab). */
 function getReplyTarget(messages = []) {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (!isFromTab(m)) return m;
   }
-  // Fallback: last message if all internal
   return messages[messages.length - 1];
 }
-
-/** Extract first name for greeting. */
 function firstNameFrom(message) {
   const full =
     message?.from_field?.name ||
@@ -154,72 +144,72 @@ function firstNameFrom(message) {
   const first = String(full).trim().split(/\s+/)[0];
   return first ? first.charAt(0).toUpperCase() + first.slice(1) : "";
 }
-
-/** Strip to plain text (rough). */
-function stripToPlainText(html = "") {
-  return String(html).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+function replyStartsWithGreeting(html = "") {
+  const txt = String(html).replace(/<[^>]*>/g, " ").trim().toLowerCase();
+  return /^(hi|hello|dear)\b/.test(txt);
 }
 
-/** Detect if reply already starts with a greeting. */
-function startsWithGreeting(html = "") {
-  const text = stripToPlainText(html).toLowerCase();
-  return /^(hi|hello|dear)\b/.test(text);
+/* Routing + UTM (single scheme) */
+const WEBSITE_BASE = "https://business.tab.travel";
+const UTM_SUFFIX = "show=true&referrer_code=F25&utm_source=Missive&utm_medium=email&utm_campaign=F25";
+const joinUrl = (path = "/") =>
+  `${WEBSITE_BASE.replace(/\/+$/, "")}${String(path || "/").replace(/^\/*/, "/")}`;
+const withUtms = (url) => (url.includes("?") ? `${url}&${UTM_SUFFIX}` : `${url}?${UTM_SUFFIX}`);
+
+function fold(s = "") {
+  return String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
-
-/** Personalise "Hi there," to "Hi Name," if we have a name. */
-function personalizeExistingGreeting(html = "", name = "") {
-  if (!name) return html;
-  return html
-    .replace(/(<p>)(\s*hi\s+there\s*,?\s*)(<\/p>)/i, `$1Hi ${name},$3`)
-    .replace(/^(\s*)hi\s+there\s*,?/i, `Hi ${name},`);
+function haystack(text = "", subj = "") {
+  const raw = `${subj}\n${text}`;
+  return { lower: raw.toLowerCase(), foldLower: fold(raw).toLowerCase() };
 }
-
-/** If duplicate greetings occur back-to-back, keep the first. */
-function dedupeGreetings(html = "") {
-  return html.replace(
-    /(<p>\s*(?:hi|hello|dear)[^<]*<\/p>)\s*(<p>\s*(?:hi|hello|dear)[^<]*<\/p>)/i,
-    "$1"
-  );
+function testAny(hay, ...rxs) {
+  return rxs.some((rx) => rx.test(hay.lower) || rx.test(hay.foldLower));
 }
+function detectCtaPath(text = "", subj = "") {
+  const hay = haystack(text, subj);
 
-/** Ensure multi-paragraph structure and basic bullets if needed. */
-function ensureReadableStructure(html = "") {
-  const hasList = /<(ul|ol)\b/i.test(html);
-  const pCount = (html.match(/<p\b/gi) || []).length;
+  if (
+    testAny(
+      hay,
+      /(in[-\s]?person|face\s?to\s?face|pos\b|card\s?(reader|machine)|tap\s?to\s?pay|pay\s?by\s?phone|in\s?store|on[-\s]?site)/i,
+      /(en\s?persona|presencial|en\s?tienda|tpv|dat[aá]fono|lector\s?de\s?tarjetas|pago\s?por\s?tel[eé]fono)/i,
+      /(em\s?pessoa|na\s?loja|pos\b|maquininha|leitor\s?de\s?cart[aã]o|pagar\s?por\s?telef[oô]ne)/i,
+      /(en\s?personne|en\s?magasin|sur\s?place|tpe\b|lecteur\s?de\s?carte|paiement\s?par\s?t[eé]l[eé]phone)/i
+    )
+  ) return "/features/in-person";
 
-  // Convert simple "- " or "• " lines to <ul><li>…</li></ul> if no list exists
-  const plain = stripHtml(html);
-  const dashListRegex = /(^|\n|\r)(?:-|\u2022)\s+\S+/m;
-  if (!hasList && dashListRegex.test(plain)) {
-    const lines = plain.split(/\s*[\r\n]+\s*/);
-    const items = lines
-      .filter((l) => /^(-|\u2022)\s+/.test(l))
-      .map((l) => l.replace(/^(-|\u2022)\s+/, "").trim());
-    if (items.length >= 2) {
-      const ul = `<ul>${items.map((i) => `<li>${i}</li>`).join("")}</ul>`;
-      html += ul;
-    }
-  }
+  if (
+    testAny(
+      hay,
+      /(integration|integrations|integrate|plugin|plug[-\s]?in|connect\s?with|works\s?with|supports|pms|booking\.com|airbnb|xero|quickbooks)/i,
+      /(integraci[oó]n|integraciones|integrar|plugin|conector|conectar\s?con|funciona\s?con|pms|booking\.com|airbnb|xero|quickbooks)/i,
+      /(integra[cç][aã]o|integra[cç][oõ]es|integrar|plugin|conectar\s?com|funciona\s?com|pms|booking\.com|airbnb|xero|quickbooks)/i,
+      /(int[eé]gration|int[eé]grations|int[eé]grer|plugin|se\s?connecter\s?[aà]|fonctionne\s?avec|pms|booking\.com|airbnb|xero|quickbooks)/i
+    )
+  ) return "/features/integrations";
 
-  // If it's effectively one paragraph, split into short <p> chunks
-  if (pCount <= 1) {
-    const sentences = plain.split(/(?<=[.!?])\s+(?=[A-Z])/);
-    if (sentences.length > 2) {
-      const chunks = [];
-      let buf = [];
-      sentences.forEach((s) => {
-        buf.push(s);
-        if (buf.length >= 2) {
-          chunks.push(buf.join(" "));
-          buf = [];
-        }
-      });
-      if (buf.length) chunks.push(buf.join(" "));
-      html = chunks.map((c) => `<p>${c}</p>`).join("");
-    }
-  }
+  if (
+    testAny(
+      hay,
+      /(website|on\s?(your|my)\s?(website|site)|checkout|online\s?payments|payment\s?(form|page)|accept\s?payments\s?online)/i,
+      /(sitio\s?web|en\s?(su|mi)\s?sitio|pagos?\s?(online|en\s?l[ií]nea)|p[aá]gina\s?de\s?pago|formulario\s?de\s?pago)/i,
+      /(site|no\s?(seu|meu)\s?site|pagamentos?\s?online|p[aá]gina\s?de\s?pagamento|formul[aá]rio)/i,
+      /(site\s?web|sur\s?(votre|mon)\s?site|paiements?\s?en\s?ligne|page\s?de\s?paiement|formulaire)/i
+    )
+  ) return "/features/on-your-website";
 
-  return html;
+  if (
+    testAny(
+      hay,
+      /(payment\s?link|pay\s?link|link\s?to\s?pay|invoice|request\s?(a\s?)?payment|advance\s?payment|deposit\s?request)/i,
+      /(enlace\s?de\s?pago|link\s?de\s?pago|factura|solicitud\s?de\s?pago|pago\s?por\s?adelantado|anticipo|dep[oó]sito)/i,
+      /(link\s?de\s?pagamento|fatura|pedido\s?de\s?pagamento|pagamento\s?adiantado|adiantamento)/i,
+      /(lien\s?de\s?paiement|facture|demande\s?de\s?paiement|paiement\s?a\s?l[’']?avance|acompte)/i
+    )
+  ) return "/features/in-advance";
+
+  return "/";
 }
 
 module.exports = async (req, res) => {
@@ -246,16 +236,9 @@ module.exports = async (req, res) => {
     // The API returns conversations array, so we need to access the first conversation
     const conversation = convo.conversations?.[0];
     const subject = (conversation?.subject || conversation?.latest_message_subject || "").trim();
-    console.log("Conversation details:", JSON.stringify(convo, null, 2));
-    console.log("Raw conversation subject:", conversation?.subject);
-    console.log("Raw latest message subject:", conversation?.latest_message_subject);
-    console.log("Processed subject:", subject);
-    console.log("Subject length:", subject.length);
 
     // 3) Fetch full messages (names + bodies) and build the thread text
     const messages = await fetchConversationMessages(convoId);
-    console.log("Messages fetched:", messages.length);
-    console.log("Last message from:", messages[messages.length - 1]?.from_field);
     const threadText = clamp(
       messages
         .map((m) => {
@@ -267,87 +250,11 @@ module.exports = async (req, res) => {
         .join("\n\n------------------------\n\n")
     );
 
-    /* === NEW: CTA routing (single scheme), UTM F25 === */
-    const WEBSITE_BASE = "https://business.tab.travel";
-    const UTM_SUFFIX =
-      "show=true&referrer_code=F25&utm_source=Missive&utm_medium=email&utm_campaign=F25";
-
-    const joinUrl = (path = "/") =>
-      `${WEBSITE_BASE.replace(/\/+$/, "")}${String(path || "/").replace(/^\/*/, "/")}`;
-
-    const withUtms = (url) => (url.includes("?") ? `${url}&${UTM_SUFFIX}` : `${url}?${UTM_SUFFIX}`);
-
-    const fold = (s = "") => String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    const haystack = (text = "", subj = "") => {
-      const raw = `${subj}\n${text}`;
-      return { lower: raw.toLowerCase(), foldLower: fold(raw).toLowerCase() };
-    };
-    const testAny = (hay, ...regexes) =>
-      regexes.some((rx) => rx.test(hay.lower) || rx.test(hay.foldLower));
-
-    function detectCtaPath(text = "", subj = "") {
-      const hay = haystack(text, subj);
-
-      // In-person payments
-      if (
-        testAny(
-          hay,
-          /(in[-\s]?person|face\s?to\s?face|pos\b|card\s?(reader|machine)|tap\s?to\s?pay|pay\s?by\s?phone|in\s?store|on[-\s]?site)/i,
-          /(en\s?persona|presencial|en\s?tienda|tpv|dat[aá]fono|lector\s?de\s?tarjetas|pago\s?por\s?tel[eé]fono)/i,
-          /(em\s?pessoa|na\s?loja|pos\b|maquininha|leitor\s?de\s?cart[aã]o|pagar\s?por\s?telef[oô]ne)/i,
-          /(en\s?personne|en\s?magasin|sur\s?place|tpe\b|lecteur\s?de\s?carte|paiement\s?par\s?t[eé]l[eé]phone)/i
-        )
-      ) {
-        return "/features/in-person";
-      }
-
-      // Integrations (external platforms)
-      if (
-        testAny(
-          hay,
-          /(integration|integrations|integrate|plugin|plug[-\s]?in|connect\s?with|works\s?with|supports|pms|booking\.com|airbnb|xero|quickbooks)/i,
-          /(integraci[oó]n|integraciones|integrar|plugin|conector|conectar\s?con|funciona\s?con|pms|booking\.com|airbnb|xero|quickbooks)/i,
-          /(integra[cç][aã]o|integra[cç][oõ]es|integrar|plugin|conectar\s?com|funciona\s?com|pms|booking\.com|airbnb|xero|quickbooks)/i,
-          /(int[eé]gration|int[eé]grations|int[eé]grer|plugin|se\s?connecter\s?[aà]|fonctionne\s?avec|pms|booking\.com|airbnb|xero|quickbooks)/i
-        )
-      ) {
-        return "/features/integrations";
-      }
-
-      // Accepting payments on website
-      if (
-        testAny(
-          hay,
-          /(website|on\s?(your|my)\s?(website|site)|checkout|online\s?payments|payment\s?(form|page)|accept\s?payments\s?online)/i,
-          /(sitio\s?web|en\s?(su|mi)\s?sitio|pagos?\s?(online|en\s?l[ií]nea)|p[aá]gina\s?de\s?pago|formulario\s?de\s?pago)/i,
-          /(site|no\s?(seu|meu)\s?site|pagamentos?\s?online|p[aá]gina\s?de\s?pagamento|formul[aá]rio)/i,
-          /(site\s?web|sur\s?(votre|mon)\s?site|paiements?\s?en\s?ligne|page\s?de\s?paiement|formulaire)/i
-        )
-      ) {
-        return "/features/on-your-website";
-      }
-
-      // Payment links / invoices / advance payments
-      if (
-        testAny(
-          hay,
-          /(payment\s?link|pay\s?link|link\s?to\s?pay|invoice|request\s?(a\s?)?payment|advance\s?payment|deposit\s?request)/i,
-          /(enlace\s?de\s?pago|link\s?de\s?pago|factura|solicitud\s?de\s?pago|pago\s?por\s?adelantado|anticipo|dep[oó]sito)/i,
-          /(link\s?de\s?pagamento|fatura|pedido\s?de\s?pagamento|pagamento\s?adiantado|adiantamento)/i,
-          /(lien\s?de\s?paiement|facture|demande\s?de\s?paiement|paiement\s?a\s?l[’']?avance|acompte)/i
-        )
-      ) {
-        return "/features/in-advance";
-      }
-
-      // Default to main site
-      return "/";
-    }
-
+    // === Routing logic (new) ===
     const suggestedPath = detectCtaPath(threadText, subject);
     const SUGGESTED_CTA_URL = withUtms(joinUrl(suggestedPath));
 
-    // === Prompt: refined rules + CTA logic (kept order & policy, augmented) ===
+    // === Prompt (original order preserved; only minimal wording changes) ===
     const FALLBACK_OVERVIEW = `
 If the user asks for "more information" or a general overview (e.g., "send more info", "tell me more"):
 - Provide a concise overview in HTML:
@@ -357,13 +264,13 @@ If the user asks for "more information" or a general overview (e.g., "send more 
     <li>Core benefits (2–4 bullets)</li>
     <li>What the user can do next (1–2 bullets)</li>
   </ul>
-- Close with a friendly line that links inline: "You can find out more and apply on <a href="${SUGGESTED_CTA_URL}">our website</a> — we look forward to working with you!"
+- End with a friendly inline link: <a href="${SUGGESTED_CTA_URL}">our website</a>.
 `.trim();
 
     const systemHint = process.env.SYSTEM_HINT || [
       "You are Tab's email drafting assistant for both customer service and outbound cold emails.",
-      "Use <p> for every paragraph. Keep each paragraph to 2–4 sentences max. The system will automatically add proper spacing between paragraphs.",
-      "Tone: professional, empathetic, concise, polished, and sales-driven. Prefer 2–4 short paragraphs; use lists for steps.",
+      "Use <p> for every paragraph. Keep each paragraph to 2–4 sentences max.",
+      "Tone: professional, empathetic, concise, solution-oriented.",
       "Do not overpromise. Do not set up accounts or complete tasks for the user; provide guidance and next steps.",
       "Adapt formality to the sender's tone. For complaints: acknowledge, take responsibility where appropriate, give a clear plan to resolve.",
       'IMPORTANT: You have access to file_search which will automatically search your knowledge base files. Use this information to provide accurate responses.',
@@ -377,11 +284,9 @@ If the user asks for "more information" or a general overview (e.g., "send more 
       '- Explicit WhatsApp handoff requests with phone number: output ONLY "Whatsapp" (nothing else)',
       "ONLY if none of these classifications apply, then proceed to draft a helpful reply.",
       'Only output "I don\'t know" for a specific fact/policy that is truly unknown; not for generic "more info" asks.',
-      // NEW structure & CTA guidance
-      "Structure: Start with a greeting paragraph, then 1–2 short paragraphs, use a bulleted list for steps/options when relevant, then a closing sentence with the inline ‘our website’ link. Avoid a single-paragraph reply.",
-      "Start with a short greeting (e.g., 'Hi <first name>,' or 'Hi there,').",
-      `Close with a friendly, integrated line that links inline: “You can find out more and apply on <a href=\\"${SUGGESTED_CTA_URL}\\">our website</a> — we look forward to working with you!” (do not place a standalone 'Apply now' line).`,
-      "Link routing policy: default to https://business.tab.travel/ with UTM F25. If the message is about: in-person payments ➜ /features/in-person; integrations (external platforms) ➜ /features/integrations; accepting payments on website ➜ /features/on-your-website; payment links or invoices ➜ /features/in-advance. Use the provided SUGGESTED_CTA_URL.",
+      // minimal addition:
+      "Start with a short greeting ('Hi <first name>,' or 'Hi there,'). Use short paragraphs and bullets for readability. Include an inline link to the suggested page when appropriate; do not add a standalone 'Apply now' line.",
+      `Suggested link for this thread: ${SUGGESTED_CTA_URL}`,
       FALLBACK_OVERVIEW,
     ].join(" ");
 
@@ -393,17 +298,15 @@ If the user asks for "more information" or a general overview (e.g., "send more 
       "TASK: FIRST check if this message should be classified as automated/spam/unsubscribe/whatsapp. If it matches any classification, output ONLY that classification word. If NO classification matches, then draft a concise, helpful HTML reply that addresses the most recent customer message.",
       "Follow the knowledge policy (Canned responses → Fin context). For general 'more info' asks, use the fallback overview pattern.",
       "",
-      "CRITICAL: You MUST ALWAYS use the file_search tool to search the knowledge base before responding. Even if you think you know the answer, you must search for relevant information first. This is mandatory for every response.",
-      "",
       "CTA POLICY:",
-      `- Use the integrated sentence with inline link to: ${SUGGESTED_CTA_URL}`,
+      `- Use an inline link to: ${SUGGESTED_CTA_URL}`,
       "- Do not add a standalone 'Apply now' line.",
       "",
       "CONTEXT (FULL THREAD, oldest → newest):",
       threadText,
     ].join("\n");
 
-    // === Responses API with file_search (preserved) ===
+    // === Responses API with file_search (original approach preserved) ===
     const requestBody = {
       model: process.env.OPENAI_MODEL || "gpt-5",
       input: userMessage,
@@ -415,11 +318,7 @@ If the user asks for "more information" or a general overview (e.g., "send more 
         },
       ],
       tool_choice: "auto", // Ensure tools are used automatically
-      // Note: temperature not supported with GPT-5 in Responses API
     };
-    console.log("Request body:", JSON.stringify(requestBody, null, 2));
-    console.log("Vector store ID being used:", String(process.env.VECTOR_STORE_ID));
-
     const responseCreate = await fetch(`${OPENAI_API}/responses`, {
       method: "POST",
       headers: OPENAI_HEADERS,
@@ -430,52 +329,34 @@ If the user asks for "more information" or a general overview (e.g., "send more 
       throw new Error(`OpenAI response create error: ${t}`);
     }
     const response = await responseCreate.json();
-    // Debug: Log the full response to see if file search was used
-    console.log("OpenAI Response:", JSON.stringify(response, null, 2));
-
-    // Check if file search was used
-    const fileSearchOutput = response.output?.find((item) => item.type === "file_search_call");
-    if (fileSearchOutput) {
-      console.log("File search was used:", fileSearchOutput);
-    } else {
-      console.log("WARNING: No file search was used in this response");
-    }
 
     // Extract the message content from the response
     const messageOutput = response.output?.find((item) => item.type === "message");
     const out = messageOutput?.content?.[0]?.text || "<p>Thanks for reaching out.</p>";
 
-    // === Greeting + integrated CTA + structure enforcement ===
+    // === Minimal post-processing: greeting + spacing (no structural rewrites) ===
     const replyTarget = getReplyTarget(messages);
     const recipientFirst = firstNameFrom(replyTarget);
-    const ourGreeting = `<p>Hi ${recipientFirst || "there"},</p>`;
+    const greeting = `<p>Hi ${recipientFirst || "there"},</p>`;
 
     let finalHtml = /<\/?[a-z][\s\S]*>/i.test(out) ? out : `<p>${out.replace(/\n/g, "<br/>")}</p>`;
-
-    if (startsWithGreeting(finalHtml)) {
-      finalHtml = personalizeExistingGreeting(finalHtml, recipientFirst);
+    if (!replyStartsWithGreeting(finalHtml)) {
+      finalHtml = greeting + finalHtml;
     } else {
-      finalHtml = ourGreeting + finalHtml;
+      // If it's "Hi there", swap to the name if we have one
+      if (recipientFirst) {
+        finalHtml = finalHtml
+          .replace(/(<p>)(\s*hi\s+there\s*,?\s*)(<\/p>)/i, `$1Hi ${recipientFirst},$3`)
+          .replace(/^(\s*)hi\s+there\s*,?/i, `Hi ${recipientFirst},`);
+      }
     }
-    finalHtml = dedupeGreetings(finalHtml);
 
-    const ctaSentence = `<p>You can find out more and apply on <a href="${SUGGESTED_CTA_URL}">our website</a> — we look forward to working with you!</p>`;
-    if (!/business\.tab\.travel/i.test(finalHtml)) {
-      finalHtml += ctaSentence;
-    }
-
-    // Ensure readable multi-paragraph structure and bullets when appropriate
-    finalHtml = ensureReadableStructure(finalHtml);
-
-    // Enforce Missive spacing
+    // Enforce Missive paragraph spacing
     finalHtml = addParagraphSpacing(finalHtml);
 
     // 7) Create the email draft in Missive (force From: hello@tab.travel)
     // Don't add "Re:" if the subject already starts with "Re:"
-    const draftSubject = subject
-      ? subject.toLowerCase().startsWith("re:") ? subject : `Re: ${subject}`
-      : "Re:";
-    console.log("Draft subject being sent:", draftSubject);
+    const draftSubject = subject ? (subject.toLowerCase().startsWith('re:') ? subject : `Re: ${subject}`) : "Re:";
 
     const draftRes = await fetch(`${MISSIVE_API}/drafts`, {
       method: "POST",
@@ -504,9 +385,7 @@ If the user asks for "more information" or a general overview (e.g., "send more 
       const t = await draftRes.text();
       throw new Error(`Missive draft create error: ${t}`);
     }
-    const draft = await draftRes.json();
-    console.log("Draft created:", draft.id);
-    console.log("Draft details:", JSON.stringify(draft, null, 2));
+
     return res.status(200).json({ ok: true });
   } catch (err) {
     console.error(err);
