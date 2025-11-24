@@ -1,6 +1,5 @@
 // api/missive-inbound.js
 // Framework: Vercel "Other" (Node 18+)
-
 // Builds FULL thread by listing /v1/conversations/:id/messages (limit=10 with pagination),
 // then fetching each /v1/messages/:id. Strips HTML, includes sender name+email+time,
 // drafts a reply via OpenAI Assistants (file_search), forces From address, and appends signature.
@@ -65,11 +64,14 @@ async function fetchConversationMessages(conversationId) {
   let pages = 0;
 
   while (pages < MAX_PAGES) {
-    const url = new URL(`${MISSIVE_API}/conversations/${encodeURIComponent(conversationId)}/messages`);
+    const url = new URL(
+      `${MISSIVE_API}/conversations/${encodeURIComponent(conversationId)}/messages`
+    );
     url.searchParams.set("limit", String(limit));
     if (until !== undefined && until !== null) {
       url.searchParams.set("until", String(until));
     }
+
     const listResp = await fetch(url.toString(), {
       headers: { Authorization: `Bearer ${process.env.MISSIVE_API_TOKEN}` },
     });
@@ -111,12 +113,17 @@ async function fetchConversationMessages(conversationId) {
     await sleep(120);
   }
 
+  // Log how many we actually pulled (shows in Vercel logs)
+  console.log(
+    `Missive messages fetched: ${collected.length} (pages=${pages}, cap=${MAX_PAGES * limit})`
+  );
+
   // Present oldest→newest for the model
   collected.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
   return collected;
 }
 
-/* ======== minimal helpers added (recipient + greeting + routing) ======== */
+/* === Minimal helpers for reply target + greeting + CTA routing === */
 function isFromTabAddress(addr = "") {
   const a = String(addr).toLowerCase().trim();
   return a.endsWith("@tab.travel") || a === "hello@tab.travel";
@@ -149,12 +156,17 @@ function replyStartsWithGreeting(html = "") {
   return /^(hi|hello|dear)\b/.test(txt);
 }
 
-/* Routing + UTM (single scheme) */
+/* Routing + UTM (F25) */
 const WEBSITE_BASE = "https://business.tab.travel";
-const UTM_SUFFIX = "show=true&referrer_code=F25&utm_source=Missive&utm_medium=email&utm_campaign=F25";
-const joinUrl = (path = "/") =>
-  `${WEBSITE_BASE.replace(/\/+$/, "")}${String(path || "/").replace(/^\/*/, "/")}`;
-const withUtms = (url) => (url.includes("?") ? `${url}&${UTM_SUFFIX}` : `${url}?${UTM_SUFFIX}`);
+const UTM_SUFFIX =
+  "show=true&referrer_code=F25&utm_source=Missive&utm_medium=email&utm_campaign=F25";
+
+function joinUrl(path = "/") {
+  return `${WEBSITE_BASE.replace(/\/+$/, "")}${String(path || "/").replace(/^\/*/, "/")}`;
+}
+function withUtms(url) {
+  return url.includes("?") ? `${url}&${UTM_SUFFIX}` : `${url}?${UTM_SUFFIX}`;
+}
 
 function fold(s = "") {
   return String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -166,9 +178,11 @@ function haystack(text = "", subj = "") {
 function testAny(hay, ...rxs) {
   return rxs.some((rx) => rx.test(hay.lower) || rx.test(hay.foldLower));
 }
+
 function detectCtaPath(text = "", subj = "") {
   const hay = haystack(text, subj);
 
+  // In-person payments
   if (
     testAny(
       hay,
@@ -177,8 +191,11 @@ function detectCtaPath(text = "", subj = "") {
       /(em\s?pessoa|na\s?loja|pos\b|maquininha|leitor\s?de\s?cart[aã]o|pagar\s?por\s?telef[oô]ne)/i,
       /(en\s?personne|en\s?magasin|sur\s?place|tpe\b|lecteur\s?de\s?carte|paiement\s?par\s?t[eé]l[eé]phone)/i
     )
-  ) return "/features/in-person";
+  ) {
+    return "/features/in-person";
+  }
 
+  // Integrations
   if (
     testAny(
       hay,
@@ -187,8 +204,11 @@ function detectCtaPath(text = "", subj = "") {
       /(integra[cç][aã]o|integra[cç][oõ]es|integrar|plugin|conectar\s?com|funciona\s?com|pms|booking\.com|airbnb|xero|quickbooks)/i,
       /(int[eé]gration|int[eé]grations|int[eé]grer|plugin|se\s?connecter\s?[aà]|fonctionne\s?avec|pms|booking\.com|airbnb|xero|quickbooks)/i
     )
-  ) return "/features/integrations";
+  ) {
+    return "/features/integrations";
+  }
 
+  // Accepting payments on website
   if (
     testAny(
       hay,
@@ -197,8 +217,11 @@ function detectCtaPath(text = "", subj = "") {
       /(site|no\s?(seu|meu)\s?site|pagamentos?\s?online|p[aá]gina\s?de\s?pagamento|formul[aá]rio)/i,
       /(site\s?web|sur\s?(votre|mon)\s?site|paiements?\s?en\s?ligne|page\s?de\s?paiement|formulaire)/i
     )
-  ) return "/features/on-your-website";
+  ) {
+    return "/features/on-your-website";
+  }
 
+  // Payment links / in advance
   if (
     testAny(
       hay,
@@ -207,8 +230,11 @@ function detectCtaPath(text = "", subj = "") {
       /(link\s?de\s?pagamento|fatura|pedido\s?de\s?pagamento|pagamento\s?adiantado|adiantamento)/i,
       /(lien\s?de\s?paiement|facture|demande\s?de\s?paiement|paiement\s?a\s?l[’']?avance|acompte)/i
     )
-  ) return "/features/in-advance";
+  ) {
+    return "/features/in-advance";
+  }
 
+  // Fallback: main site
   return "/";
 }
 
@@ -225,9 +251,12 @@ module.exports = async (req, res) => {
     }
 
     // 2) Fetch conversation meta (subject)
-    const convoResp = await fetch(`${MISSIVE_API}/conversations/${encodeURIComponent(convoId)}`, {
-      headers: { Authorization: `Bearer ${process.env.MISSIVE_API_TOKEN}` },
-    });
+    const convoResp = await fetch(
+      `${MISSIVE_API}/conversations/${encodeURIComponent(convoId)}`,
+      {
+        headers: { Authorization: `Bearer ${process.env.MISSIVE_API_TOKEN}` },
+      }
+    );
     if (!convoResp.ok) {
       const t = await convoResp.text();
       throw new Error(`Missive conversation fetch failed: ${t}`);
@@ -236,9 +265,16 @@ module.exports = async (req, res) => {
     // The API returns conversations array, so we need to access the first conversation
     const conversation = convo.conversations?.[0];
     const subject = (conversation?.subject || conversation?.latest_message_subject || "").trim();
+    console.log("Conversation details:", JSON.stringify(convo, null, 2));
+    console.log("Raw conversation subject:", conversation?.subject);
+    console.log("Raw latest message subject:", conversation?.latest_message_subject);
+    console.log("Processed subject:", subject);
+    console.log("Subject length:", subject.length);
 
     // 3) Fetch full messages (names + bodies) and build the thread text
     const messages = await fetchConversationMessages(convoId);
+    console.log("Messages fetched:", messages.length);
+    console.log("Last message from:", messages[messages.length - 1]?.from_field);
     const threadText = clamp(
       messages
         .map((m) => {
@@ -250,11 +286,13 @@ module.exports = async (req, res) => {
         .join("\n\n------------------------\n\n")
     );
 
-    // === Routing logic (new) ===
+    // Choose reply target (latest external sender)
+    const replyTarget = getReplyTarget(messages);
+
+    // === Prompt: refined rules + CTA logic ===
     const suggestedPath = detectCtaPath(threadText, subject);
     const SUGGESTED_CTA_URL = withUtms(joinUrl(suggestedPath));
 
-    // === Prompt (original order preserved; only minimal wording changes) ===
     const FALLBACK_OVERVIEW = `
 If the user asks for "more information" or a general overview (e.g., "send more info", "tell me more"):
 - Provide a concise overview in HTML:
@@ -264,31 +302,32 @@ If the user asks for "more information" or a general overview (e.g., "send more 
     <li>Core benefits (2–4 bullets)</li>
     <li>What the user can do next (1–2 bullets)</li>
   </ul>
-- End with a friendly inline link: <a href="${SUGGESTED_CTA_URL}">our website</a>.
+- End with a short, friendly sentence that includes a hyperlink to ${SUGGESTED_CTA_URL} (for example: "You can find out more and apply on our website").
+- Do NOT say "I don't know" in these generic cases; use available high-level info from files and prior messages.
 `.trim();
 
-    const systemHint = process.env.SYSTEM_HINT || [
-      "You are Tab's email drafting assistant for both customer service and outbound cold emails.",
-      "Use <p> for every paragraph. Keep each paragraph to 2–4 sentences max.",
-      "Tone: professional, empathetic, concise, solution-oriented.",
-      "Do not overpromise. Do not set up accounts or complete tasks for the user; provide guidance and next steps.",
-      "Adapt formality to the sender's tone. For complaints: acknowledge, take responsibility where appropriate, give a clear plan to resolve.",
-      'IMPORTANT: You have access to file_search which will automatically search your knowledge base files. Use this information to provide accurate responses.',
-      'PRIORITY ORDER: 1) ALWAYS check "Canned responses.pdf" FIRST - if there is a relevant canned response, use it exactly as written. 2) Only if no suitable canned response exists, then consult "Fin context.pdf" and synthesize an answer.',
-      'When using canned responses, adapt them slightly to the specific customer situation but keep the core message and structure.',
-      "Use file_search to ground facts; do not show citations, filenames, or IDs to the customer.",
-      "FIRST, ALWAYS check for these classifications before drafting any reply:",
-      '- Automated/irrelevant bulk emails: output ONLY "Automated response" (nothing else)',
-      '- Spam/phishing attempts: output ONLY "spam" (nothing else)',
-      '- Unsubscribe/angry/remove requests: output ONLY "Unsubscribe" (nothing else)',
-      '- Explicit WhatsApp handoff requests with phone number: output ONLY "Whatsapp" (nothing else)',
-      "ONLY if none of these classifications apply, then proceed to draft a helpful reply.",
-      'Only output "I don\'t know" for a specific fact/policy that is truly unknown; not for generic "more info" asks.',
-      // minimal addition:
-      "Start with a short greeting ('Hi <first name>,' or 'Hi there,'). Use short paragraphs and bullets for readability. Include an inline link to the suggested page when appropriate; do not add a standalone 'Apply now' line.",
-      `Suggested link for this thread: ${SUGGESTED_CTA_URL}`,
-      FALLBACK_OVERVIEW,
-    ].join(" ");
+    const systemHint =
+      process.env.SYSTEM_HINT ||
+      [
+        "You are Tab's email drafting assistant for both customer service and outbound cold emails.",
+        "Use <p> for every paragraph. Keep each paragraph to 2–4 sentences max. The system will automatically add proper spacing between paragraphs.",
+        "Tone: professional, empathetic, concise, solution-oriented. Prefer 2–4 short paragraphs; use lists for steps.",
+        "Do not overpromise. Do not set up accounts or complete tasks for the user; provide guidance and next steps.",
+        "Adapt formality to the sender's tone. For complaints: acknowledge, take responsibility where appropriate, give a clear plan to resolve.",
+        'IMPORTANT: You have access to file_search which will automatically search your knowledge base files. Use this information to provide accurate responses.',
+        'PRIORITY ORDER: 1) ALWAYS check "Canned responses.pdf" FIRST - if there is a relevant canned response, use it exactly as written. 2) Only if no suitable canned response exists, then consult "Fin context.pdf" and synthesize an answer.',
+        "When using canned responses, adapt them slightly to the specific customer situation but keep the core message and structure.",
+        "Use file_search to ground facts; do not show citations, filenames, or IDs to the customer.",
+        "FIRST, ALWAYS check for these classifications before drafting any reply:",
+        '- Automated/irrelevant bulk emails: output ONLY "Automated response" (nothing else)',
+        '- Spam/phishing attempts: output ONLY "spam" (nothing else)',
+        '- Unsubscribe/angry/remove requests: output ONLY "Unsubscribe" (nothing else)',
+        '- Explicit WhatsApp handoff requests with phone number: output ONLY "Whatsapp" (nothing else)',
+        "ONLY if none of these classifications apply, then proceed to draft a helpful reply.",
+        'Only output "I don\'t know" for a specific fact/policy that is truly unknown; not for generic "more info" asks.',
+        `When appropriate, include a short, friendly CTA sentence that links to ${SUGGESTED_CTA_URL}. The exact wording is up to you; it could be similar to "You can find out more and apply on our website."`,
+        FALLBACK_OVERVIEW,
+      ].join(" ");
 
     const userMessage = [
       `SYSTEM INSTRUCTIONS: ${systemHint}`,
@@ -298,15 +337,22 @@ If the user asks for "more information" or a general overview (e.g., "send more 
       "TASK: FIRST check if this message should be classified as automated/spam/unsubscribe/whatsapp. If it matches any classification, output ONLY that classification word. If NO classification matches, then draft a concise, helpful HTML reply that addresses the most recent customer message.",
       "Follow the knowledge policy (Canned responses → Fin context). For general 'more info' asks, use the fallback overview pattern.",
       "",
+      "CRITICAL: You MUST ALWAYS use the file_search tool to search the knowledge base before responding. Even if you think you know the answer, you must search for relevant information first. This is mandatory for every response.",
+      "",
+      "SEARCH INSTRUCTIONS: Use file_search to look for:",
+      "1. Canned responses related to the customer's question",
+      "2. Context about Tab's services, policies, or procedures",
+      "3. Any relevant information that could help answer the customer's question",
+      "Search for terms related to the customer's message and the conversation context.",
+      "",
       "CTA POLICY:",
-      `- Use an inline link to: ${SUGGESTED_CTA_URL}`,
-      "- Do not add a standalone 'Apply now' line.",
+      `- When you include a CTA, add a short sentence that naturally links to ${SUGGESTED_CTA_URL} (for example: "You can find out more and apply on our website"). Do not always use the exact same wording; choose phrasing that fits the rest of the email.`,
       "",
       "CONTEXT (FULL THREAD, oldest → newest):",
       threadText,
     ].join("\n");
 
-    // === Responses API with file_search (original approach preserved) ===
+    // === Responses API with file_search (correct approach) ===
     const requestBody = {
       model: process.env.OPENAI_MODEL || "gpt-5",
       input: userMessage,
@@ -318,7 +364,11 @@ If the user asks for "more information" or a general overview (e.g., "send more 
         },
       ],
       tool_choice: "auto", // Ensure tools are used automatically
+      // Note: temperature not supported with GPT-5 in Responses API
     };
+    console.log("Request body:", JSON.stringify(requestBody, null, 2));
+    console.log("Vector store ID being used:", String(process.env.VECTOR_STORE_ID));
+
     const responseCreate = await fetch(`${OPENAI_API}/responses`, {
       method: "POST",
       headers: OPENAI_HEADERS,
@@ -329,34 +379,49 @@ If the user asks for "more information" or a general overview (e.g., "send more 
       throw new Error(`OpenAI response create error: ${t}`);
     }
     const response = await responseCreate.json();
+    // Debug: Log the full response to see if file search was used
+    console.log("OpenAI Response:", JSON.stringify(response, null, 2));
+
+    // Check if file search was used
+    const fileSearchOutput = response.output?.find((item) => item.type === "file_search_call");
+    if (fileSearchOutput) {
+      console.log("File search was used:", fileSearchOutput);
+    } else {
+      console.log("WARNING: No file search was used in this response");
+    }
 
     // Extract the message content from the response
     const messageOutput = response.output?.find((item) => item.type === "message");
     const out = messageOutput?.content?.[0]?.text || "<p>Thanks for reaching out.</p>";
 
-    // === Minimal post-processing: greeting + spacing (no structural rewrites) ===
-    const replyTarget = getReplyTarget(messages);
-    const recipientFirst = firstNameFrom(replyTarget);
-    const greeting = `<p>Hi ${recipientFirst || "there"},</p>`;
+    // Ensure HTML, add greeting, then enforce spacing (signature handled by Missive)
+    let finalHtml = /<\/?[a-z][\s\S]*>/i.test(out)
+      ? out
+      : `<p>${out.replace(/\n/g, "<br/>")}</p>`;
 
-    let finalHtml = /<\/?[a-z][\s\S]*>/i.test(out) ? out : `<p>${out.replace(/\n/g, "<br/>")}</p>`;
+    const recipientFirst = firstNameFrom(replyTarget);
+    const greetingHtml = `<p>Hi ${recipientFirst || "there"},</p>`;
+
     if (!replyStartsWithGreeting(finalHtml)) {
-      finalHtml = greeting + finalHtml;
-    } else {
-      // If it's "Hi there", swap to the name if we have one
-      if (recipientFirst) {
-        finalHtml = finalHtml
-          .replace(/(<p>)(\s*hi\s+there\s*,?\s*)(<\/p>)/i, `$1Hi ${recipientFirst},$3`)
-          .replace(/^(\s*)hi\s+there\s*,?/i, `Hi ${recipientFirst},`);
-      }
+      finalHtml = greetingHtml + finalHtml;
+    } else if (recipientFirst) {
+      // If it's "Hi there", personalise it
+      finalHtml = finalHtml.replace(
+        /(<p>)(\s*hi\s+there\s*,?\s*)(<\/p>)/i,
+        `<p>Hi ${recipientFirst},</p>`
+      );
     }
 
-    // Enforce Missive paragraph spacing
     finalHtml = addParagraphSpacing(finalHtml);
+
+    // Note: Signature is handled automatically by Missive for hello@tab.travel
 
     // 7) Create the email draft in Missive (force From: hello@tab.travel)
     // Don't add "Re:" if the subject already starts with "Re:"
-    const draftSubject = subject ? (subject.toLowerCase().startsWith('re:') ? subject : `Re: ${subject}`) : "Re:";
+    const draftSubject = subject
+      ? subject.toLowerCase().startsWith("re:") ? subject : `Re: ${subject}`
+      : "Re:";
+    console.log("Draft subject being sent:", draftSubject);
 
     const draftRes = await fetch(`${MISSIVE_API}/drafts`, {
       method: "POST",
@@ -370,7 +435,10 @@ If the user asks for "more information" or a general overview (e.g., "send more 
           subject: draftSubject,
           body: appendSignature(finalHtml),
           quote_previous_message: false,
-          from_field: { address: "hello@tab.travel", name: "Raghvi" },
+          from_field: {
+            address: "hello@tab.travel",
+            name: "Raghvi",
+          },
           to_fields: [
             {
               address: replyTarget?.from_field?.address,
@@ -385,6 +453,9 @@ If the user asks for "more information" or a general overview (e.g., "send more 
       const t = await draftRes.text();
       throw new Error(`Missive draft create error: ${t}`);
     }
+    const draft = await draftRes.json();
+    console.log("Draft created:", draft.id);
+    console.log("Draft details:", JSON.stringify(draft, null, 2));
 
     return res.status(200).json({ ok: true });
   } catch (err) {
