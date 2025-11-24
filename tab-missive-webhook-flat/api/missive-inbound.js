@@ -325,7 +325,7 @@ If the user asks for "more information" or a general overview (e.g., "send more 
         '- Explicit WhatsApp handoff requests with phone number: output ONLY "Whatsapp" (nothing else)',
         "ONLY if none of these classifications apply, then proceed to draft a helpful reply.",
         'Only output "I don\'t know" for a specific fact/policy that is truly unknown; not for generic "more info" asks.',
-        `When appropriate, include a short, friendly CTA sentence that links to ${SUGGESTED_CTA_URL}. The exact wording is up to you; it could be similar to "You can find out more and apply on our website."`,
+        `When appropriate, include a short, friendly CTA sentence that links to ${SUGGESTED_CTA_URL}. The exact wording is up to you; it could be similar to "You can find out more and apply on our website." Include the CTA URL here. Always use the CTA when you can once in an email unless it really doesn't make sense to.`,
         FALLBACK_OVERVIEW,
       ].join(" ");
 
