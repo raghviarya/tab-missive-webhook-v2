@@ -346,7 +346,7 @@ If the user asks for "more information" or a general overview (e.g., "send more 
       "Search for terms related to the customer's message and the conversation context.",
       "",
       "CTA POLICY:",
-      `- When you include a CTA, add a short sentence that naturally links to ${SUGGESTED_CTA_URL} (for example: "You can find out more and apply on our website"). Do not always use the exact same wording; choose phrasing that fits the rest of the email.`,
+      `- When you include a CTA, add a short sentence that naturally links to ${SUGGESTED_CTA_URL} (for example: "You can find out more and apply on our website"). Do not always use the exact same wording; choose phrasing that fits the rest of the email. Embed CTA URL here. Do not include the CTA URL as a full link - always embed it.`,
       "",
       "CONTEXT (FULL THREAD, oldest → newest):",
       threadText,
