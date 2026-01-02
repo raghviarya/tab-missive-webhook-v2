@@ -46,7 +46,7 @@ function addParagraphSpacing(html) {
 
 /** Append the proper Tab signature if it's not already present. */
 function appendSignature(html) {
-  const sig = `<p><br></p><p>Raghvi</p><p>—</p><p>Tab Support</p><p><br></p><p>Tab.</p><p><a href="https://business.tab.travel/payments">business.tab.travel/payments</a></p><p><br></p><p>Tab Labs Ltd is a company registered in England and Wales. Registered number: 09339113. Registered office: 6th Floor, 1 London Wall, London, EC2Y 5EB, UK.</p>`;
+  const sig = `<p><br></p><p>Raghvi</p><p>—</p><p>Tab Support</p><p><br></p><p>Tab.</p><p><a href="https://business.tab.travel">business.tab.travel</a></p><p><br></p><p>Tab Labs Ltd is a company registered in England and Wales. Registered number: 09339113. Registered office: 6th Floor, 1 London Wall, London, EC2Y 5EB, UK.</p>`;
   if (html.includes("Raghvi") && html.includes("Tab Support")) return html;
   return html + sig;
 }
