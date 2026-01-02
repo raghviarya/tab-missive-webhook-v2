@@ -156,7 +156,7 @@ function replyStartsWithGreeting(html = "") {
   return /^(hi|hello|dear)\b/.test(txt);
 }
 
-/* Routing + UTM (F25) */
+/* UTM (F25) */
 const WEBSITE_BASE = "https://business.tab.travel";
 const UTM_SUFFIX =
   "show=true&referrer_code=F25&utm_source=Missive&utm_medium=email&utm_campaign=F25";
@@ -166,76 +166,6 @@ function joinUrl(path = "/") {
 }
 function withUtms(url) {
   return url.includes("?") ? `${url}&${UTM_SUFFIX}` : `${url}?${UTM_SUFFIX}`;
-}
-
-function fold(s = "") {
-  return String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-}
-function haystack(text = "", subj = "") {
-  const raw = `${subj}\n${text}`;
-  return { lower: raw.toLowerCase(), foldLower: fold(raw).toLowerCase() };
-}
-function testAny(hay, ...rxs) {
-  return rxs.some((rx) => rx.test(hay.lower) || rx.test(hay.foldLower));
-}
-
-function detectCtaPath(text = "", subj = "") {
-  const hay = haystack(text, subj);
-
-  // In-person payments
-  if (
-    testAny(
-      hay,
-      /(in[-\s]?person|face\s?to\s?face|pos\b|card\s?(reader|machine)|tap\s?to\s?pay|pay\s?by\s?phone|in\s?store|on[-\s]?site)/i,
-      /(en\s?persona|presencial|en\s?tienda|tpv|dat[aá]fono|lector\s?de\s?tarjetas|pago\s?por\s?tel[eé]fono)/i,
-      /(em\s?pessoa|na\s?loja|pos\b|maquininha|leitor\s?de\s?cart[aã]o|pagar\s?por\s?telef[oô]ne)/i,
-      /(en\s?personne|en\s?magasin|sur\s?place|tpe\b|lecteur\s?de\s?carte|paiement\s?par\s?t[eé]l[eé]phone)/i
-    )
-  ) {
-    return "/features/in-person";
-  }
-
-  // Integrations
-  if (
-    testAny(
-      hay,
-      /(integration|integrations|integrate|plugin|plug[-\s]?in|connect\s?with|works\s?with|supports|pms|booking\.com|airbnb|xero|quickbooks)/i,
-      /(integraci[oó]n|integraciones|integrar|plugin|conector|conectar\s?con|funciona\s?con|pms|booking\.com|airbnb|xero|quickbooks)/i,
-      /(integra[cç][aã]o|integra[cç][oõ]es|integrar|plugin|conectar\s?com|funciona\s?com|pms|booking\.com|airbnb|xero|quickbooks)/i,
-      /(int[eé]gration|int[eé]grations|int[eé]grer|plugin|se\s?connecter\s?[aà]|fonctionne\s?avec|pms|booking\.com|airbnb|xero|quickbooks)/i
-    )
-  ) {
-    return "/features/integrations";
-  }
-
-  // Accepting payments on website
-  if (
-    testAny(
-      hay,
-      /(website|on\s?(your|my)\s?(website|site)|checkout|online\s?payments|payment\s?(form|page)|accept\s?payments\s?online)/i,
-      /(sitio\s?web|en\s?(su|mi)\s?sitio|pagos?\s?(online|en\s?l[ií]nea)|p[aá]gina\s?de\s?pago|formulario\s?de\s?pago)/i,
-      /(site|no\s?(seu|meu)\s?site|pagamentos?\s?online|p[aá]gina\s?de\s?pagamento|formul[aá]rio)/i,
-      /(site\s?web|sur\s?(votre|mon)\s?site|paiements?\s?en\s?ligne|page\s?de\s?paiement|formulaire)/i
-    )
-  ) {
-    return "/features/on-your-website";
-  }
-
-  // Payment links / in advance
-  if (
-    testAny(
-      hay,
-      /(payment\s?link|pay\s?link|link\s?to\s?pay|invoice|request\s?(a\s?)?payment|advance\s?payment|deposit\s?request)/i,
-      /(enlace\s?de\s?pago|link\s?de\s?pago|factura|solicitud\s?de\s?pago|pago\s?por\s?adelantado|anticipo|dep[oó]sito)/i,
-      /(link\s?de\s?pagamento|fatura|pedido\s?de\s?pagamento|pagamento\s?adiantado|adiantamento)/i,
-      /(lien\s?de\s?paiement|facture|demande\s?de\s?paiement|paiement\s?a\s?l[’']?avance|acompte)/i
-    )
-  ) {
-    return "/features/in-advance";
-  }
-
-  // Fallback: main site
-  return "/";
 }
 
 module.exports = async (req, res) => {
@@ -290,8 +220,7 @@ module.exports = async (req, res) => {
     const replyTarget = getReplyTarget(messages);
 
     // === Prompt: refined rules + CTA logic ===
-    const suggestedPath = detectCtaPath(threadText, subject);
-    const SUGGESTED_CTA_URL = withUtms(joinUrl(suggestedPath));
+    const SUGGESTED_CTA_URL = withUtms(joinUrl("/"));
 
     const FALLBACK_OVERVIEW = `
 If the user asks for "more information" or a general overview (e.g., "send more info", "tell me more"):
